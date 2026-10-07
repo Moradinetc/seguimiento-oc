@@ -271,6 +271,11 @@
   header .brand{display:flex;align-items:center;gap:14px;}
   header .brand-logo{height:32px;width:auto;display:block;}
   header .brand-div{width:1px;height:30px;background:var(--border);flex:0 0 auto;}
+  /* Botón de ayuda: abre el manual de usuario (manual.html) en otra pestaña */
+  .help-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;flex:0 0 auto;
+    border:1.5px solid var(--accent);color:var(--accent);background:#fff;font-weight:800;font-size:18px;line-height:1;text-decoration:none;
+    transition:background .15s,color .15s,box-shadow .15s;}
+  .help-btn:hover,.help-btn:focus-visible{background:var(--accent);color:#fff;box-shadow:0 3px 10px -3px rgba(95,37,159,0.5);outline:none;}
   header .brand h1{margin:0;font-size:18px;font-weight:700;color:var(--accent);letter-spacing:-.2px;}
   header .brand .sub{color:var(--muted);font-size:12px;margin-top:2px;font-weight:500;}
   @media (max-width:560px){ header .brand-div, header .brand-text{display:none;} }
@@ -443,6 +448,7 @@
       <h1>Seguimiento de Órdenes de Compra</h1>
     </div>
   </div>
+  <a class="help-btn" id="btnAyuda" href="manual.html" target="_blank" rel="noopener" title="Manual de usuario" aria-label="Abrir el manual de usuario">?</a>
 </header>
 
 <nav class="topnav" id="topnav">
