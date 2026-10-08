@@ -1237,10 +1237,12 @@ function difOC(o){
 function tagDividida(o, d){
   if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
   const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
+  if(d.fuente !== 'recepciones'){
+    const tip = `Dividida · también en ${otros}\nOdoo no indica qué llegó en cada arribo: no se reparte\nToda la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}`;
+    return `<span class="tag-div" title="${escapeHtml(tip)}">dividida</span>`;
+  }
   const pct = Math.round(d.fraccion*100);
-  const tip = d.fuente==='recepciones'
-    ? `Dividida · también en ${otros}\nAquí: ${fmtInt(d.piezas)} de ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(d.monto)} (${pct}%)${difOC(o)}`
-    : `Dividida · también en ${otros}\nAquí: ${pct}% estimado (sus recepciones no indican el arribo)`;
+  const tip = `Dividida · también en ${otros}\nAquí: ${fmtInt(d.piezas)} de ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(d.monto)}${difOC(o)}`;
   return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${pct}%</span>`;
 }
 function embOcsDetail(ocs){
@@ -1248,11 +1250,11 @@ function embOcsDetail(ocs){
   const rows = ocs.map(x=>{ const o = x.oc || x; const d = x.det; return `<tr>
     <td style="font-weight:700;color:var(--accent);white-space:nowrap;">${o.name}${tagDividida(o,d)}</td>
     <td>${o.proveedor||'—'}</td>
-    <td class="num">${fmtInt(d ? d.piezas : o.piezas_pedidas)}</td>
-    <td class="num">${celdaRecibidas(o, d ? (d.piezas_recibidas ?? Math.round((o.piezas_recibidas||0) * d.fraccion)) : o.piezas_recibidas, d)}</td>
+    <td class="num">${d ? (d.piezas != null ? fmtInt(d.piezas) : '—') : fmtInt(o.piezas_pedidas)}</td>
+    <td class="num">${d ? (d.piezas_recibidas != null ? celdaRecibidas(o, d.piezas_recibidas, d) : '—') : celdaRecibidas(o, o.piezas_recibidas)}</td>
     <td class="num">${d ? (d.skus != null ? fmtInt(d.skus) : '<span title="Sin recepciones etiquetadas con este arribo: no se sabe qué productos trae">—</span>') : fmtInt(o.num_skus)}</td>
     <td>${pillReceipt(o.receipt_status)}</td>
-    <td class="num">${fmtMoney(d ? d.monto : o.amount_total)}</td>
+    <td class="num">${d ? (d.monto != null ? fmtMoney(d.monto) : '—') : fmtMoney(o.amount_total)}</td>
     <td>${pillPago(o.estatus_pago)}</td>
   </tr>`; }).join('');
   return `<div class="emb-ocs"><table>
