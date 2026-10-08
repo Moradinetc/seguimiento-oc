@@ -165,23 +165,22 @@ async function construir() {
       if (mv.product_id && (dem > 0 || rec > 0)) a.prods.add(m2oId(mv.product_id));
     }
   }
-  // Porcentajes que siempre suman exactamente 100 (método del mayor residuo), con los decimales necesarios:
-  // empieza con 1 y agrega más mientras alguna parte con piezas se vea como 0 % o como 100 % (p. ej. 2,999 de 3,000
-  // → 99.97 % + 0.03 % en lugar de 100.0 % + 0.0 %). Máximo 4 decimales.
+  // Porcentajes ENTEROS que siempre suman 100 (método del mayor residuo). Ninguna parte con piezas se muestra como
+  // 0 % ni como 100 %: si una parte queda en 0 %, se sube a 1 % y ese punto se le quita a la parte más grande
+  // (p. ej. 2,999 de 3,000 pz → 99 % + 1 %; 878/2/100 pz → 89 % + 1 % + 10 %).
   function pctsCien(valores) {
     const tot = valores.reduce((s, v) => s + v, 0);
     if (!tot) return valores.map(() => 0);
-    const conPiezas = valores.filter((v) => v > 0).length;
-    let res = null;
-    for (let dec = 1; dec <= 4; dec++) {
-      const escala = 100 * Math.pow(10, dec);
-      const crudos = valores.map((v) => (v / tot) * escala);
-      const base = crudos.map(Math.floor);
-      let falta = escala - base.reduce((s, v) => s + v, 0);
-      crudos.map((v, i) => [v - base[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (falta > 0) { base[i]++; falta--; } });
-      res = base.map((v) => v / Math.pow(10, dec));
-      const engaña = valores.some((v, i) => v > 0 && (res[i] === 0 || (conPiezas > 1 && res[i] === 100)));
-      if (!engaña) break;
+    const crudos = valores.map((v) => (v / tot) * 100);
+    const res = crudos.map(Math.floor);
+    let falta = 100 - res.reduce((s, v) => s + v, 0);
+    crudos.map((v, i) => [v - res[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (falta > 0) { res[i]++; falta--; } });
+    for (let i = 0; i < valores.length; i++) {
+      if (valores[i] > 0 && res[i] === 0) {
+        let k = -1;   // la parte más grande que aún puede ceder un punto
+        for (let j = 0; j < res.length; j++) if (j !== i && res[j] > 1 && (k < 0 || res[j] > res[k])) k = j;
+        if (k >= 0) { res[k]--; res[i]++; }
+      }
     }
     return res;
   }
@@ -282,7 +281,7 @@ async function construir() {
         //  - OC dividida con recepciones etiquetadas: piezas, recibidas y SKUs de esas recepciones; monto =
         //    Σ piezas × precio unitario de cada producto en la OC, convertido con el tipo de cambio de la OC.
         //  - OC dividida sin recepciones etiquetadas: null (el tablero muestra "—"); no se reparte.
-        //  - pct: % de las piezas de la OC en esa parte, 1 decimal, suman 100.0. Si la OC sigue abierta, lo que no está en
+        //  - pct: % de las piezas de la OC en esa parte, entero, suman 100 (ninguna parte con piezas en 0 % ni 100 %). Si la OC sigue abierta, lo que no está en
         //    ninguna recepción etiquetada aparece como parte "pendiente" con arribo '' (Sin arribo asignado).
         arribos_detalle: repartoArribos(p).map((d) => {
           if (d.fuente === 'oc') {
