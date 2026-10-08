@@ -1237,13 +1237,17 @@ function difOC(o){
 function tagDividida(o, d){
   if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
   const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
-  if(d.fuente !== 'recepciones'){
+  if(d.fuente === 'sin_datos'){
     const tip = `Dividida · también en ${otros}\nOdoo no indica qué llegó en cada arribo: no se reparte\nToda la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}`;
     return `<span class="tag-div" title="${escapeHtml(tip)}">dividida</span>`;
   }
-  const pct = Math.round(d.fraccion*100);
-  const tip = `Dividida · también en ${otros}\nAquí: ${fmtInt(d.piezas)} de ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(d.monto)}${difOC(o)}`;
-  return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${pct}%</span>`;
+  // % real de las piezas de la OC en esta parte (1 decimal; entre todas las partes suman 100.0 %)
+  const pctTxt = d.pct != null ? d.pct.toLocaleString('es-MX',{minimumFractionDigits:1, maximumFractionDigits:1}) + ' %' : '';
+  const otrosTxt = otros ? otros.split(', ').map(x=>x||'sin arribo asignado').join(', ') : '';
+  const tip = d.fuente === 'pendiente'
+    ? `Pendiente sin arribo · ${pctTxt}\nPor recibir: ${fmtInt(d.piezas)} pz · ${fmtMoney(d.monto)}\nEl resto viene en ${otrosTxt}`
+    : `Dividida · ${pctTxt} de la OC\nAquí: ${fmtInt(d.piezas)} pz · ${fmtMoney(d.monto)} · también en ${otrosTxt}${difOC(o)}`;
+  return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${pctTxt}</span>`;
 }
 function embOcsDetail(ocs){
   if(!ocs || !ocs.length) return '<div class="emb-none">Sin OCs en este arribo.</div>';
