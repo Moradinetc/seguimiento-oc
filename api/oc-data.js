@@ -61,21 +61,63 @@ const ESTADO_RANK = { or: 0, tr: 1, ad: 2, de: 3, ar: 4 };
 async function construir() {
   const uid = await login();
 
-  const [pos, lines, picks, bills, conts] = await Promise.all([
+  const [pos, lines, picks, bills, conts, arrCat] = await Promise.all([
     searchRead(uid, 'purchase.order', [], ['name', 'x_nombre_prov', 'date_order', 'state', 'receipt_status', 'amount_total',
       'currency_rate', 'date_planned', 'x_studio_fecha_de_produccin', 'x_nombre_arribo_oc', 'user_id'], 'date_order asc, id asc'),
     searchRead(uid, 'purchase.order.line', [['display_type', '=', false]], ['order_id', 'product_id', 'product_qty', 'qty_received']),
-    searchRead(uid, 'stock.picking', [['container_id', '!=', false]], ['origin', 'container_id']),
+    searchRead(uid, 'stock.picking', [['container_id', '!=', false]], ['origin', 'container_id', 'state', 'date_done', 'x_studio_arribo']),
     searchRead(uid, 'account.move', [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['invoice_origin', '!=', false]],
       ['invoice_origin', 'payment_state', 'amount_residual']),
     searchRead(uid, 'containers.move', [], ['name', 'estado', 'transport_type', 'pickup_date', 'shipment_date', 'customs_date',
       'clearance_date', 'arrival_date', 'expected_date', 'landed_cost_id', 'shipment_by', 'customs']),
+    searchRead(uid, 'x_nombre_arribo', [], ['display_name']).catch(() => []),   // catálogo de arribos (Air #5-26, …); opcional
   ]);
+  const arribosCat = new Map((Array.isArray(arrCat) ? arrCat : []).map((a) => [a.id, String(a.display_name || '').trim()]));
 
   const costIds = [...new Set(conts.map((c) => m2oId(c.landed_cost_id)).filter(Boolean))];
   const lcl = costIds.length
     ? await searchRead(uid, 'stock.landed.cost.lines', [['cost_id', 'in', costIds]], ['cost_id', 'name', 'price_unit'], 'id asc')
     : [];
+
+  // --- Llegada deducida por recepciones ---
+  // Si todas las recepciones (no canceladas) de un contenedor están validadas y en Odoo no se marcó "Arribado",
+  // se considera arribado con la fecha de la última recepción. Se marca estado_inferido para mostrarlo en el tracker.
+  const picksPorCont = new Map();
+  for (const sp of picks) {
+    const cid = m2oId(sp.container_id); if (!cid || sp.state === 'cancel') continue;
+    if (!picksPorCont.has(cid)) picksPorCont.set(cid, []);
+    picksPorCont.get(cid).push(sp);
+  }
+  for (const cm of conts) {
+    cm.estado_odoo = cm.estado;
+    cm.estado_inferido = false;
+    const ps = picksPorCont.get(cm.id) || [];
+    if (cm.estado !== 'ar' && ps.length && ps.every((sp) => sp.state === 'done')) {
+      const ult = ps.map((sp) => sp.date_done).filter(Boolean).sort().pop();
+      cm.estado = 'ar';
+      cm.estado_inferido = true;
+      if (!cm.arrival_date && ult) cm.arrival_date = dateLocal(ult);
+    }
+  }
+
+  // --- Arribos divididos: una OC puede venir en 2+ arribos ("Air #4-26, Air #5-26") ---
+  const arribosDe = (p) => splitOrigin(p.x_nombre_arribo_oc);
+  const divididas = pos.filter((p) => arribosDe(p).length > 1);
+  const nombresArriboPick = (sp) => (Array.isArray(sp.x_studio_arribo) ? sp.x_studio_arribo : [])
+    .map((id) => arribosCat.get(id)).filter(Boolean);
+  let movesDiv = [];
+  const picksDiv = [];
+  if (divididas.length) {
+    const nombresDiv = new Set(divididas.map((p) => p.name));
+    for (const sp of picks) {
+      if (sp.state === 'cancel') continue;
+      if (splitOrigin(sp.origin).some((n) => nombresDiv.has(n))) picksDiv.push(sp);
+    }
+    if (picksDiv.length) {
+      movesDiv = (await searchRead(uid, 'stock.move', [['picking_id', 'in', picksDiv.map((sp) => sp.id)], ['state', '!=', 'cancel']],
+        ['picking_id', 'purchase_line_id', 'product_uom_qty', 'quantity', 'state']).catch(() => [])) || [];   // opcional: sin esto se reparte en partes iguales
+    }
+  }
 
   // --- agregados por OC (equivalente a polq) ---
   const polq = new Map();
@@ -86,6 +128,27 @@ async function construir() {
     a.ped += Number(l.product_qty) || 0;
     a.rec += Number(l.qty_received) || 0;
     if (l.product_id) a.prods.add(m2oId(l.product_id));
+  }
+  // Reparto de cada OC dividida entre sus arribos, según las piezas de las recepciones etiquetadas con cada arribo.
+  const lineaOC = new Map(lines.map((l) => [l.id, m2oId(l.order_id)]));
+  const pickById = new Map(picksDiv.map((sp) => [sp.id, sp]));
+  const piezasArribo = new Map();   // po_id → Map(arribo → piezas)
+  for (const mv of movesDiv) {
+    const oid = lineaOC.get(m2oId(mv.purchase_line_id)); if (!oid) continue;
+    const sp = pickById.get(m2oId(mv.picking_id)); if (!sp) continue;
+    const tags = nombresArriboPick(sp); if (!tags.length) continue;
+    const qty = (mv.state === 'done' ? Number(mv.quantity) : Number(mv.product_uom_qty)) || 0;
+    if (!piezasArribo.has(oid)) piezasArribo.set(oid, new Map());
+    const m = piezasArribo.get(oid);
+    for (const t of tags) m.set(t, (m.get(t) || 0) + qty / tags.length);
+  }
+  function repartoArribos(p) {
+    const lista = arribosDe(p);
+    if (lista.length <= 1) return lista.map((a) => ({ arribo: a, fraccion: 1, fuente: 'oc' }));
+    const m = piezasArribo.get(p.id) || new Map();
+    const tot = lista.reduce((s, a) => s + (m.get(a) || 0), 0);
+    if (tot > 0) return lista.map((a) => ({ arribo: a, fraccion: (m.get(a) || 0) / tot, fuente: 'recepciones' }));
+    return lista.map((a) => ({ arribo: a, fraccion: 1 / lista.length, fuente: 'igual' }));
   }
   const poByName = new Map(pos.map((p) => [p.name, p]));
   const contById = new Map(conts.map((c) => [c.id, c]));
@@ -148,6 +211,13 @@ async function construir() {
         currency_rate: p.currency_rate,
         estado_oc: p.state === 'done' ? 'purchase' : p.state,   // "Bloqueada" en Odoo = confirmada
         arribo: str(p.x_nombre_arribo_oc),
+        arribos_detalle: repartoArribos(p).map((d) => ({
+          arribo: d.arribo,
+          fraccion: Math.round(d.fraccion * 10000) / 10000,
+          piezas: Math.round(q.ped * d.fraccion),
+          monto: mx === null ? 0 : round2(mx * d.fraccion),
+          fuente: d.fuente,
+        })),
         container_name: c ? c.name : null,
         container_estado: c ? str(c.estado) : null,
         container_transporte: c ? str(c.transport_type) : null,
@@ -176,7 +246,8 @@ async function construir() {
     .map((cm) => {
       const ocs = [...(ocsDeCont.get(cm.id) || [])].map((n) => poByName.get(n)).filter(Boolean);
       const lineasCosto = lineasPorCosto.get(m2oId(cm.landed_cost_id)) || [];
-      const arribos = [...new Set(ocs.map((p) => p.x_nombre_arribo_oc).filter(Boolean))].sort();
+      const deRecep = (picksPorCont.get(cm.id) || []).flatMap(nombresArriboPick);
+      const arribos = [...new Set(deRecep.length ? deRecep : ocs.flatMap(arribosDe))].sort();
       return {
         id: cm.id,
         name: cm.name,
@@ -193,6 +264,8 @@ async function construir() {
         arribos: arribos.length ? arribos.join(' | ') : null,
         piezas: ocs.length ? Math.round(ocs.reduce((s, p) => s + ((polq.get(p.id) || {}).ped || 0), 0)) : null,
         gasto_logistico: lineasCosto.length ? round2(lineasCosto.reduce((s, l) => s + (Number(l.price_unit) || 0), 0)) : null,
+        estado_inferido: !!cm.estado_inferido,
+        estado_odoo: str(cm.estado_odoo),
         transportista_id: m2oId(cm.shipment_by),
         transportista_nombre: m2oName(cm.shipment_by),
         aduana_id: m2oId(cm.customs),
