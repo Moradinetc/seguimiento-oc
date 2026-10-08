@@ -381,6 +381,12 @@
   .trk-sel:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--border));}
   /* Fila de arribo expandible → sus OCs */
   tr.emb-row{cursor:pointer;}
+  .emb-search{width:100%;max-width:360px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:13.5px;background:#fff;}
+  .emb-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(95,37,159,.12);}
+  .emb-searchbar{display:flex;align-items:center;gap:12px;margin:0 0 12px;flex-wrap:wrap;}
+  .emb-searchbar .cnt{font-size:12.5px;color:var(--muted);}
+  .tag-div{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;background:#FFF4E0;color:#8A5208;vertical-align:middle;cursor:help;}
+  .tag-inf{display:block;margin-top:3px;font-size:10.5px;color:var(--muted);font-weight:600;}
   tr.emb-row:hover{background:var(--accent-soft) !important;}
   .emb-chev{display:inline-block;transition:transform .15s ease;color:var(--muted);margin-right:7px;font-size:10px;}
   tr.emb-row.open .emb-chev{transform:rotate(90deg);color:var(--accent);}
@@ -573,6 +579,10 @@
         </div>
       </div>
 
+      <div class="emb-searchbar" id="embSearchBar" data-panel-bar="embarques">
+        <input id="embSearch" class="emb-search" type="search" placeholder="Buscar arribo, OC, proveedor o contenedor…" aria-label="Buscar en embarques y contenedores">
+        <span class="cnt" id="embSearchCnt"></span>
+      </div>
       <div id="tabEmbarques" data-panel="embarques" class="tablewrap" style="max-height:280px;">
         <table>
           <thead><tr><th>Arribo</th><th style="text-align:center;">OCs</th><th style="text-align:center;">Recibidas</th><th style="text-align:center;">Parciales</th><th style="text-align:center;">No recibidas</th><th style="text-align:center;">Piezas</th><th style="text-align:center;">Monto (MXN)</th></tr></thead>
@@ -1107,41 +1117,89 @@ function renderTopProveedores(){
   </tr>`;
 }
 
+function tagDividida(o, d){
+  if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
+  const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
+  const como = d.fuente==='recepciones' ? 'según sus recepciones' : 'en partes iguales (sin recepciones etiquetadas)';
+  const tip = `OC dividida: también viene en ${otros}. A este arribo le corresponde el ${Math.round(d.fraccion*100)}% (${fmtInt(d.piezas)} pz · ${fmtMoney(d.monto)}), ${como}. Total de la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}.`;
+  return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${Math.round(d.fraccion*100)}%</span>`;
+}
 function embOcsDetail(ocs){
   if(!ocs || !ocs.length) return '<div class="emb-none">Sin OCs en este arribo.</div>';
-  const rows = ocs.map(o=>`<tr>
-    <td style="font-weight:700;color:var(--accent);white-space:nowrap;">${o.name}</td>
+  const rows = ocs.map(x=>{ const o = x.oc || x; const d = x.det; return `<tr>
+    <td style="font-weight:700;color:var(--accent);white-space:nowrap;">${o.name}${tagDividida(o,d)}</td>
     <td>${o.proveedor||'—'}</td>
-    <td class="num">${fmtInt(o.piezas_pedidas)}</td>
-    <td class="num">${fmtInt(o.piezas_recibidas)}</td>
+    <td class="num">${fmtInt(d ? d.piezas : o.piezas_pedidas)}</td>
+    <td class="num">${fmtInt(d ? Math.round((o.piezas_recibidas||0) * d.fraccion) : o.piezas_recibidas)}</td>
     <td class="num">${fmtInt(o.num_skus)}</td>
     <td>${pillReceipt(o.receipt_status)}</td>
-    <td class="num">${fmtMoney(o.amount_total)}</td>
+    <td class="num">${fmtMoney(d ? d.monto : o.amount_total)}</td>
     <td>${pillPago(o.estatus_pago)}</td>
-  </tr>`).join('');
+  </tr>`; }).join('');
   return `<div class="emb-ocs"><table>
     <thead><tr><th>OC</th><th>Proveedor</th><th class="num">Pz ped.</th><th class="num">Pz rec.</th><th class="num">SKUs</th><th>Recepción</th><th class="num">Monto (MXN)</th><th>Pago</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
+let embSearchQ = '';
+let embVistaActual = 'embarques';
+const embConteo = { arribos: '', contenedores: '' };
+function actualizarContadorBusqueda(){
+  const el = document.getElementById('embSearchCnt'); if(!el) return;
+  el.textContent = embVistaActual === 'contenedores' ? embConteo.contenedores : embConteo.arribos;
+}
+// ¿El contenedor coincide con la búsqueda? Por folio, arribo, transportista, aduana o las OCs que trae.
+function contCoincide(c, q){
+  if(!q) return true;
+  if((c.name||'').toLowerCase().includes(q) || (c.arribos||'').toLowerCase().includes(q)
+     || (c.transportista_nombre||'').toLowerCase().includes(q) || (c.aduana_nombre||'').toLowerCase().includes(q)) return true;
+  const folios = Array.isArray(c.ocs) ? c.ocs : ordenes.filter(o=>o.container_name===c.name).map(o=>o.name);
+  if(folios.some(f=>String(f).toLowerCase().includes(q))) return true;
+  const set = new Set(folios);
+  return ordenes.some(o => set.has(o.name) && (o.proveedor||'').toLowerCase().includes(q));
+}
 function renderEmbarques(){
   const byArribo = {};
-  ordenesFiltradas.filter(matchesStatusFilters).forEach(o=>{
-    const key = o.arribo || 'Sin arribo asignado';
-    if(!byArribo[key]) byArribo[key] = {arribo:key, num_ocs:0, recibidas:0, parciales:0, no_recibidas:0, piezas:0, monto:0, folios:[], ocs:[]};
-    const b = byArribo[key];
-    b.num_ocs++;
-    b.folios.push(o.name);
-    b.ocs.push(o);
-    if(o.receipt_status==='full') b.recibidas++;
-    else if(o.receipt_status==='partial') b.parciales++;
-    else b.no_recibidas++;
-    b.piezas += o.piezas_pedidas;
-    b.monto += o.amount_total;
+  const ocsBase = ordenesFiltradas.filter(matchesStatusFilters);
+  ocsBase.forEach(o=>{
+    // Una OC dividida ("Air #4-26, Air #5-26") cuenta en cada arribo con su parte de piezas y monto.
+    const dets = (o.arribos_detalle && o.arribos_detalle.length)
+      ? o.arribos_detalle
+      : [{arribo: o.arribo || '', piezas: o.piezas_pedidas, monto: o.amount_total || 0, fraccion: 1}];
+    dets.forEach(d=>{
+      const key = d.arribo || 'Sin arribo asignado';
+      if(!byArribo[key]) byArribo[key] = {arribo:key, num_ocs:0, recibidas:0, parciales:0, no_recibidas:0, piezas:0, monto:0, folios:[], ocs:[], divididas:0};
+      const b = byArribo[key];
+      b.num_ocs++;
+      b.folios.push(o.name);
+      b.ocs.push({oc:o, det: dets.length>1 ? d : null});
+      if(dets.length>1) b.divididas++;
+      if(o.receipt_status==='full') b.recibidas++;
+      else if(o.receipt_status==='partial') b.parciales++;
+      else b.no_recibidas++;
+      b.piezas += d.piezas || 0;
+      b.monto += d.monto || 0;
+    });
   });
-  const todos = Object.values(byArribo).sort((a,b)=> a.arribo==='Sin arribo asignado' ? 1 : b.arribo==='Sin arribo asignado' ? -1 : b.monto-a.monto);
+  let todos = Object.values(byArribo).sort((a,b)=> a.arribo==='Sin arribo asignado' ? 1 : b.arribo==='Sin arribo asignado' ? -1 : b.monto-a.monto);
+  const totalArribos = todos.length;
+  const q = embSearchQ.trim().toLowerCase();
+  if(q){
+    todos = todos.filter(a=> a.arribo.toLowerCase().includes(q) || a.ocs.some(x=>{
+      const o = x.oc;
+      return o.name.toLowerCase().includes(q) || (o.proveedor||'').toLowerCase().includes(q) || (o.container_name||'').toLowerCase().includes(q);
+    }));
+  }
+  embConteo.arribos = q ? `${todos.length} de ${totalArribos} arribos` : '';
+  actualizarContadorBusqueda();
+  if(!todos.length){
+    document.getElementById('tblEmbarques').innerHTML = `<tr><td colspan="7" style="padding:18px;color:var(--muted);text-align:center;">${q ? 'Ningún arribo coincide con la búsqueda.' : 'Sin OCs en el periodo.'}</td></tr>`;
+    document.getElementById('tfootEmbarques').innerHTML = '';
+    return;
+  }
   document.getElementById('tblEmbarques').innerHTML = todos.map(a=>{
     const completo = a.no_recibidas===0 && a.parciales===0;
-    const arrLbl = a.arribo==='Sin arribo asignado' ? `<span style="color:var(--muted);">${a.arribo}</span>` : a.arribo;
+    const arrLbl = (a.arribo==='Sin arribo asignado' ? `<span style="color:var(--muted);">${a.arribo}</span>` : escapeHtml(a.arribo))
+      + (a.divididas ? `<span class="tag-div" title="${a.divididas} OC${a.divididas>1?'s':''} de este arribo también viene${a.divididas>1?'n':''} en otro arribo; aquí solo se suma su parte de piezas y monto.">${a.divididas} dividida${a.divididas>1?'s':''}</span>` : '');
     const detalle = embOcsDetail(a.ocs);
     return `<tr class="emb-row">
       <td><span class="emb-chev">▸</span>${arrLbl}</td>
@@ -1155,12 +1213,15 @@ function renderEmbarques(){
     <tr class="emb-detail" style="display:none;"><td colspan="7">${detalle}</td></tr>`;
   }).join('');
   const conArribo = todos.filter(a=>a.arribo!=='Sin arribo asignado').length;
+  // Totales sin duplicar: una OC dividida se cuenta una sola vez.
+  const unicas = new Map(); todos.forEach(a=>a.ocs.forEach(x=>unicas.set(x.oc.name, x.oc)));
+  const ocsU = [...unicas.values()];
   document.getElementById('tfootEmbarques').innerHTML = `<tr>
     <td>Total (${conArribo} embarques)</td>
-    <td class="num">${fmtInt(sumBy(todos,a=>a.num_ocs))}</td>
-    <td class="num">${fmtInt(sumBy(todos,a=>a.recibidas))}</td>
-    <td class="num">${fmtInt(sumBy(todos,a=>a.parciales))}</td>
-    <td class="num">${fmtInt(sumBy(todos,a=>a.no_recibidas))}</td>
+    <td class="num">${fmtInt(ocsU.length)}</td>
+    <td class="num">${fmtInt(ocsU.filter(o=>o.receipt_status==='full').length)}</td>
+    <td class="num">${fmtInt(ocsU.filter(o=>o.receipt_status==='partial').length)}</td>
+    <td class="num">${fmtInt(ocsU.filter(o=>o.receipt_status!=='full'&&o.receipt_status!=='partial').length)}</td>
     <td class="num">${fmtInt(sumBy(todos,a=>a.piezas))}</td>
     <td class="num">${fmtMoney(sumBy(todos,a=>a.monto))}</td>
   </tr>`;
@@ -1527,11 +1588,21 @@ function renderContenedores(){
 
   updateContSortIndicators();
 
+  const qCont = embSearchQ.trim().toLowerCase();
   const todos = todosSinFiltrar.filter(c =>
     (currentPuntualidadFilter === 'all' || etapaPuntualidad(c) === currentPuntualidadFilter) &&
-    (currentEstatusFilter === 'all' || c.estado === currentEstatusFilter)
+    (currentEstatusFilter === 'all' || c.estado === currentEstatusFilter) &&
+    contCoincide(c, qCont)
   );
+  embConteo.contenedores = qCont ? `${todos.length} de ${containers.length} contenedores` : '';
+  actualizarContadorBusqueda();
 
+  if(!todos.length){
+    const ncol = document.querySelectorAll('#tabContenedores thead th').length || 18;
+    document.getElementById('tblContenedores').innerHTML = `<tr><td colspan="${ncol}" style="padding:18px;color:var(--muted);text-align:center;">${qCont ? 'Ningún contenedor coincide con la búsqueda.' : 'Sin contenedores con estos filtros.'}</td></tr>`;
+    document.getElementById('tfootContenedores').innerHTML = '';
+    return;
+  }
   document.getElementById('tblContenedores').innerHTML = todos.map(c=>{
     const atrasado = c.estado !== 'ar' && c.eta && new Date(c.eta) < hoy;
     const dTrans = diasTranscurridos(c);
@@ -1540,7 +1611,7 @@ function renderContenedores(){
     return `<tr>
       <td>${c.name}</td>
       <td>${c.arribos ? `<span style="color:var(--accent);">${c.arribos}</span>` : '<span style="color:var(--muted);">—</span>'}</td>
-      <td>${pillContainerEstado(c.estado)}</td>
+      <td>${pillContainerEstado(c.estado)}${c.estado_inferido ? `<span class="tag-inf" title="En Odoo sigue como '${escapeHtml(CONTAINER_ESTADO_LABEL[c.estado_odoo]||c.estado_odoo||'')}', pero todas sus recepciones ya están validadas en CEDIS.">por recepción</span>` : ''}</td>
       <td style="font-size:11.5px;">${ubicacionEstimada(c)}</td>
       <td>${pillPuntualidad(c)}</td>
       <td class="num">${transporteLabel(c.transporte)}</td>
@@ -1870,6 +1941,10 @@ const PANEL_SUB = {
 };
 function mostrarPanelEmb(which){
   document.getElementById('tabEmbarques').style.display = which==='embarques' ? 'block' : 'none';
+  // El buscador sirve para Embarques por arribo y para el Tracker (mismo texto en ambas vistas)
+  const sb = document.getElementById('embSearchBar'); if(sb) sb.style.display = (which==='embarques' || which==='contenedores') ? 'flex' : 'none';
+  embVistaActual = which;
+  actualizarContadorBusqueda();
   document.getElementById('tabContenedores').style.display = which==='contenedores' ? 'block' : 'none';
   document.getElementById('tabCalendario').style.display = which==='calendario' ? 'block' : 'none';
   document.getElementById('tabGastos').style.display = which==='gastos' ? 'block' : 'none';
@@ -2184,6 +2259,11 @@ async function actualizarDesdeOdoo(){
   }
 }
 document.getElementById('btnActualizar').addEventListener('click', actualizarDesdeOdoo);
+(function(){
+  const inp = document.getElementById('embSearch'); if(!inp) return;
+  let t = null;
+  inp.addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(()=>{ embSearchQ = inp.value; renderEmbarques(); renderContenedores(); }, 150); });
+})();
 cargarDatosVivo();
 window.addEventListener('load', fitKpiValues);
 

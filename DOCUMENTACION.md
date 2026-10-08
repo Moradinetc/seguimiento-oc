@@ -72,8 +72,8 @@ Las columnas OC y Proveedor quedan fijas al desplazar en horizontal. La barra de
 
 Un selector alterna dos vistas:
 
-- **Embarques por arribo.** OCs agrupadas por `arribo`, con recibidas, parciales, no recibidas, piezas y monto. Al dar clic en un arribo se ven sus OCs.
-- **Tracker de embarques.** Un renglón por contenedor: estatus, ubicación estimada, puntualidad, transporte, piezas, ETA, llegada real, días transcurridos, días de retraso, % de avance, OCs, monto, gasto logístico, % del gasto sobre el producto, transportista y aduana. Se filtra por estatus y por puntualidad (selects de color) y se ordena por cualquier columna.
+- **Embarques por arribo.** OCs agrupadas por arribo, con recibidas, parciales, no recibidas, piezas y monto. Al dar clic en un arribo se ven sus OCs. Tiene un **buscador** (`#embSearch`) por arribo, folio de OC, proveedor o contenedor, **compartido con el Tracker**: el texto se conserva al cambiar de vista y cada una muestra su conteo ("N de M arribos" / "N de M contenedores"). Una OC **dividida** en varios arribos (campo `x_nombre_arribo_oc` = "Air #4-26, Air #5-26") cuenta en cada arribo con su parte de piezas y monto, marcada con la etiqueta *dividida N%*; el total de la tabla la cuenta una sola vez.
+- **Tracker de embarques.** Usa el mismo buscador: encuentra contenedores por folio, arribo, transportista, aduana, folio de cualquier OC que traiga (campo `ocs` de cada contenedor) o proveedor de esas OCs. Un renglón por contenedor (los que se cerraron por recepción llevan la nota *por recepción* bajo el estatus): estatus, ubicación estimada, puntualidad, transporte, piezas, ETA, llegada real, días transcurridos, días de retraso, % de avance, OCs, monto, gasto logístico, % del gasto sobre el producto, transportista y aduana. Se filtra por estatus y por puntualidad (selects de color) y se ordena por cualquier columna.
 
 ### 4.4 Calendario (inaccesible en la versión actual)
 
@@ -106,7 +106,7 @@ flowchart LR
   G["GitHub Moradinetc/seguimiento-oc"] -->|"push a main = deploy"| H
 ```
 
-El navegador descarga `index.html`, que no trae datos. Al cargar, llama a `/api/oc-data`. Esa function corre en Vercel, se autentica en Odoo con un usuario de integración (credenciales en variables de entorno de Vercel) y hace **7 llamadas JSON-RPC** (`authenticate` y 6 `search_read`, cinco en paralelo). Con eso arma un solo JSON con el mismo formato que tenía la versión de BigQuery, así el front no cambió. El navegador hace todo lo demás (filtros, KPIs, gráficas, ordenamiento) en memoria.
+El navegador descarga `index.html`, que no trae datos. Al cargar, llama a `/api/oc-data`. Esa function corre en Vercel, se autentica en Odoo con un usuario de integración (credenciales en variables de entorno de Vercel) y hace **8 o 9 llamadas JSON-RPC** (`authenticate`, 6 `search_read` en paralelo, costeo y, si hay OCs divididas, sus movimientos). Con eso arma un solo JSON con el mismo formato que tenía la versión de BigQuery, así el front no cambió. El navegador hace todo lo demás (filtros, KPIs, gráficas, ordenamiento) en memoria.
 
 **No se guarda nada:** no hay base de datos intermedia ni corte nocturno. Cada consulta sale de Odoo en ese momento.
 
@@ -124,7 +124,9 @@ Todas se leen de Odoo con `search_read`, solo lectura, con `active_test: false`.
 |---|---|---|
 | `purchase.order` | todas | OCs: proveedor (`x_nombre_prov`), fechas, estado, monto, tipo de cambio, arribo (`x_nombre_arribo_oc`), producción (`x_studio_fecha_de_produccin`), comprador (`user_id`) |
 | `purchase.order.line` | `display_type = false` | Piezas pedidas y recibidas, SKUs distintos por OC |
-| `stock.picking` | `container_id != false` | Liga contenedor ↔ OC (campo `origin` + `container_id`) |
+| `stock.picking` | `container_id != false` | Liga contenedor ↔ OC (`origin` + `container_id`), estado y fecha de validación (llegada por recepción) y arribo de cada recepción (`x_studio_arribo`) |
+| `x_nombre_arribo` | todos | Catálogo de arribos (nombre de cada id de `x_studio_arribo`). Opcional: si falla, se reparte en partes iguales |
+| `stock.move` | recepciones de OCs divididas | Piezas de cada recepción para repartir la OC entre arribos. Opcional |
 | `containers.move` | todos | Estado, transporte, fechas, costeo ligado (`landed_cost_id`), transportista (`shipment_by`) y aduana (`customs`) |
 | `stock.landed.cost.lines` | `cost_id` en los costeos de los contenedores | Conceptos y montos de gastos de importación |
 | `account.move` | `move_type = in_invoice`, `state = posted`, `invoice_origin != false` | Facturas de proveedor: estatus de pago y saldo pendiente |
@@ -140,6 +142,8 @@ La respuesta tiene las llaves `_todos`, `containers`, `gastosDesglose`, `costeoE
 
 **Trampas conocidas del modelo de datos:**
 
+- `purchase.order.x_nombre_arribo_oc` puede traer **varios arribos separados por coma** cuando la OC se recibió en partes: se reparte (ver 6.3), nunca se agrupa por el texto completo.
+- Los contenedores terrestres (`RCP/NA/...`) suelen quedarse en "En origen" aunque ya se recibieron: por eso existe la regla *Arribado por recepción*.
 - `stock.picking.origin` y `account.move.invoice_origin` pueden traer **varias OCs separadas por coma** (las facturas de importación `FCIMP/...` cubren hasta 29 OCs). Se separan por coma y se recortan espacios. El saldo pendiente de una factura compartida se cuenta en cada OC que cubre.
 - Los campos datetime de Odoo vienen en UTC: se convierten a fecha de `America/Mexico_City` (`dateLocal()`). Los campos tipo date se usan tal cual.
 - El monto en MXN es `amount_total / currency_rate`. En Odoo, `currency_rate` es "unidades de moneda de la OC por 1 MXN".
@@ -154,6 +158,9 @@ La respuesta tiene las llaves `_todos`, `containers`, `gastosDesglose`, `costeoE
 | Estatus general | `cancel` → cancelada; `draft` → pendiente; recepción `full` → recibida; contenedor `tr` o `ad` → en tránsito; si no → aprobada | Función `estatusGeneral` |
 | Atrasada (OC) | No recibida completa y `fecha_planeada` anterior a hoy | `date_planned` |
 | Producción | No recibida completa: sin `fecha_produccion` → sin dato; fecha ≤ hoy → en producción; fecha > hoy → programada | `x_studio_fecha_de_produccin` |
+| Arribado por recepción | Si el contenedor no está en `ar` en Odoo pero **todas** sus recepciones no canceladas están `done`, se trata como arribado; llegada real = fecha de la última recepción (`date_done`). Se entrega `estado_inferido: true` y `estado_odoo` con el valor original | `stock.picking.state`, `date_done` |
+| Reparto de OC dividida | Para cada arribo de la OC, fracción = piezas de sus recepciones etiquetadas con ese arribo (`stock.picking.x_studio_arribo`, cantidades de `stock.move`: `quantity` si está hecho, `product_uom_qty` si no) ÷ total etiquetado. Piezas y monto de la OC × fracción. Sin recepciones etiquetadas: partes iguales (`fuente: "igual"`) | `x_nombre_arribo_oc`, `x_nombre_arribo`, `stock.move` |
+| Arribos de un contenedor | Los de sus recepciones (`x_studio_arribo`); si no tienen, los de sus OCs separados por coma | `stock.picking`, `purchase.order` |
 | Puntualidad (contenedor) | Arribado → no aplica. En origen o sin ETA → en monitoreo. ETA vencida → **crítico**. ETA en ≤ 5 días → **alertado**. Si no → **en tiempo** | `estado`, `expected_date` |
 | Días de retraso | Días desde la ETA si ya pasó y no ha arribado; si no, 0 | Función `diasRetrasoContenedor` |
 | Días transcurridos | De `shipment_date` a `arrival_date`, o a hoy si no ha llegado | Función `diasTranscurridos` |
@@ -291,6 +298,7 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 
 | Fecha | Cambio |
 |---|---|
+| 08/10/2026 | Contenedores **arribados por recepción** (12 contenedores estaban recibidos pero sin cerrar en Odoo); **OCs divididas** entre arribos se reparten según sus recepciones (Air #5-26 pasa de 24 a 25 OCs); **buscador** compartido en Embarques por arribo y Tracker; cada contenedor trae la lista de sus OCs (`ocs`) |
 | 08/10/2026 | Lee **directo de Odoo** por JSON-RPC (sin BigQuery ni almacenamiento); botón **↻ Actualizar**; fecha real de los datos en encabezado y pie; nombres de comprador, transportista y aduana desde Odoo; OCs bloqueadas cuentan como confirmadas. Motivo: las tablas de BigQuery del tablero no tenían acción planificada en el conector y llevaban 8 días sin actualizarse |
 | 07/10/2026 | Botón **?** en el encabezado que abre el manual de usuario (`manual.html`); se agregan `manual.html` y `DOCUMENTACION.md` al repo |
 | 07/10/2026 | Migración a Vercel con datos en vivo desde BigQuery (`/api/oc-data`); repo `Moradinetc/seguimiento-oc` |
@@ -301,10 +309,11 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 ## 16. Preguntas abiertas
 
 1. ¿Quiénes son los usuarios exactos del tablero y quién decide los accesos? (Dirección)
-2. ¿El estado `de` (Despachado) debe tener un % de avance entre 75 y 100? (Importaciones)
-3. ¿Se debe proteger la URL con login? (Dirección / Sistemas)
-4. ¿Se pasa el proyecto a un plan Pro de Vercel? (Sistemas / Finanzas)
-5. ¿Se restaura el botón del **Calendario** de llegadas? (Sistemas)
+2. ¿Logística cerrará en Odoo (estatus *Arribado* y fecha) los contenedores terrestres al recibirlos? Mientras no, el tablero los deduce por recepción. (Logística)
+3. ¿El estado `de` (Despachado) debe tener un % de avance entre 75 y 100? (Importaciones)
+4. ¿Se debe proteger la URL con login? (Dirección / Sistemas)
+5. ¿Se pasa el proyecto a un plan Pro de Vercel? (Sistemas / Finanzas)
+6. ¿Se restaura el botón del **Calendario** de llegadas? (Sistemas)
 
 ---
 
