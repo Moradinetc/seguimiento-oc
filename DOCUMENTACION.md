@@ -300,6 +300,7 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 
 | Fecha | Cambio |
 |---|---|
+| 08/10/2026 | Tooltip de *dividida N%* resumido a 2–3 líneas: otros arribos · parte de este arribo (piezas, monto, %) · faltante/sobrante de toda la OC si lo hay |
 | 08/10/2026 | Marca ▼/▲ de OCs divididas se calcula por arribo (antes usaba los totales de la OC y mostraba, p. ej., "4,740 → 4,750" en una fila de 3,783) |
 | 08/10/2026 | Buscador por proveedor en *Proveedores por monto* (Resumen) |
 | 08/10/2026 | Sugerencias del buscador con **lista propia** (antes la nativa del navegador): OCs y monto por arribo, teclado ↑ ↓ |

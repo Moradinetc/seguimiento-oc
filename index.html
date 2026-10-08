@@ -1227,19 +1227,21 @@ function celdaRecibidas(o, valor, d){
   return txt;   // faltante aún pendiente de recibir: es normal, sin marca
 }
 // Faltante/sobrante de TODA la OC (para el tooltip de una OC dividida)
+// Faltante/sobrante de TODA la OC, en una línea corta (para el tooltip de una OC dividida)
 function difOC(o){
   const dif = (o.piezas_recibidas||0) - (o.piezas_pedidas||0);
   if(!o.piezas_pedidas || dif === 0) return '';
-  if(dif > 0) return `\nEn toda la OC llegaron ${fmtInt(dif)} piezas de más.`;
-  return o.receipt_status === 'full' ? `\nEn toda la OC faltaron ${fmtInt(-dif)} piezas (el resto se canceló en Odoo).` : '';
+  if(dif > 0) return `\nToda la OC: llegaron ${fmtInt(dif)} pz de más`;
+  return o.receipt_status === 'full' ? `\nToda la OC: faltaron ${fmtInt(-dif)} pz (cancelado)` : '';
 }
 function tagDividida(o, d){
   if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
   const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
+  const pct = Math.round(d.fraccion*100);
   const tip = d.fuente==='recepciones'
-    ? `OC dividida: también viene en ${otros}. En este arribo, según sus recepciones en Odoo: ${fmtInt(d.piezas)} pz de demanda, ${fmtInt(d.piezas_recibidas ?? 0)} recibidas y ${fmtInt(d.skus ?? 0)} SKUs. El monto (${fmtMoney(d.monto)}) es el ${Math.round(d.fraccion*100)}% de la OC, proporcional a sus piezas. Total de la OC: ${fmtInt(o.piezas_pedidas)} pz pedidas · ${fmtInt(o.piezas_recibidas)} recibidas · ${fmtInt(o.num_skus)} SKUs · ${fmtMoney(o.amount_total)}.${difOC(o)}`
-    : `OC dividida: también viene en ${otros}. Sus recepciones no indican el arribo, así que se reparte en partes iguales (${Math.round(d.fraccion*100)}%). Total de la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}.`;
-  return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${Math.round(d.fraccion*100)}%</span>`;
+    ? `Dividida · también en ${otros}\nAquí: ${fmtInt(d.piezas)} de ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(d.monto)} (${pct}%)${difOC(o)}`
+    : `Dividida · también en ${otros}\nAquí: ${pct}% estimado (sus recepciones no indican el arribo)`;
+  return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${pct}%</span>`;
 }
 function embOcsDetail(ocs){
   if(!ocs || !ocs.length) return '<div class="emb-none">Sin OCs en este arribo.</div>';
@@ -1360,7 +1362,7 @@ function renderEmbarques(){
   document.getElementById('tblEmbarques').innerHTML = todos.map(a=>{
     const completo = a.no_recibidas===0 && a.parciales===0;
     const arrLbl = (a.arribo==='Sin arribo asignado' ? `<span style="color:var(--muted);">${a.arribo}</span>` : escapeHtml(a.arribo))
-      + (a.divididas ? `<span class="tag-div" title="${a.divididas} OC${a.divididas>1?'s':''} de este arribo también viene${a.divididas>1?'n':''} en otro arribo; aquí solo se suma su parte de piezas y monto.">${a.divididas} dividida${a.divididas>1?'s':''}</span>` : '');
+      + (a.divididas ? `<span class="tag-div" title="${a.divididas} OC${a.divididas>1?'s':''} también en otros arribos\nAquí solo se suma su parte">${a.divididas} dividida${a.divididas>1?'s':''}</span>` : '');
     const detalle = embOcsDetail(a.ocs);
     return `<tr class="emb-row">
       <td><span class="emb-chev">▸</span>${arrLbl}</td>
