@@ -1,22 +1,22 @@
 # Seguimiento OC · Control Directivos
 
-> Tablero para Dirección y Compras que muestra, en vivo desde BigQuery, el estado de cada orden de compra (OC): si ya llegó, si ya se pagó, en qué contenedor viene, cuándo llega y cuánto costó traerla.
+> Tablero para Dirección y Compras que muestra, en vivo directo desde Odoo, el estado de cada orden de compra (OC): si ya llegó, si ya se pagó, en qué contenedor viene, cuándo llega y cuánto costó traerla.
 
 ## 1. Ficha rápida
 
 | | |
 |---|---|
-| **Qué es** | Dashboard de solo lectura (HTML/JS de un archivo + 1 function serverless) |
+| **Qué es** | Dashboard de solo lectura (HTML/JS de un archivo + 1 function serverless que lee Odoo) |
 | **Usuarios** | Dirección y gerencias; equipo de Compras e Importaciones. ⚠️ Por confirmar: lista exacta de usuarios |
 | **URL de producción** | https://seguimiento-oc.vercel.app/ |
 | **Código fuente** | GitHub `Moradinetc/seguimiento-oc` (privado), rama `main` |
 | **Hosting** | Vercel — proyecto `seguimiento-oc`, equipo `etcetera-accesorios` |
-| **Fuentes de datos** | BigQuery `odooconnector-491517.odoo_data` (copia de las tablas de Odoo 18) |
+| **Fuentes de datos** | Odoo 18 (`etcetera.xmarts.net`) directo por JSON-RPC, solo lectura. Sin BigQuery ni base intermedia |
 | **Responsable** | Coordinación de Sistemas (IT) |
 | **Estado** | En producción |
-| **Documentado** | 07/10/2026 — código del primer deploy en Vercel |
+| **Documentado** | 08/10/2026 — versión que lee directo de Odoo |
 
-Versión anterior: un snapshot estático en Netlify (`lambent-pothos-bb13c2.netlify.app`) con los datos incrustados en el HTML. Desde el 07/10/2026 la versión vigente es la de Vercel con datos en vivo.
+Versión anterior: un snapshot estático en Netlify (`lambent-pothos-bb13c2.netlify.app`) con los datos incrustados en el HTML. Del 07/10/2026 al 08/10/2026 la versión de Vercel leyó de BigQuery; desde el 08/10/2026 lee directo de Odoo (ver historial).
 
 ## 2. Para qué sirve
 
@@ -24,7 +24,7 @@ Las compras de etcétera se hacen sobre todo a proveedores en China y llegan en 
 
 Este tablero junta esa información en un solo lugar. Dirección lo usa para ver el monto comprometido, el avance de recepción y pagos y los embarques atrasados. Compras e Importaciones lo usan para dar seguimiento a cada contenedor y para revisar cuánto pesan los gastos de logística e impuestos sobre el valor de la mercancía (costeo por arribo).
 
-Es de **solo lectura**: no modifica nada en Odoo ni en BigQuery.
+Es de **solo lectura**: no modifica nada en Odoo.
 
 ## 3. Glosario
 
@@ -46,7 +46,7 @@ Es de **solo lectura**: no modifica nada en Odoo ni en BigQuery.
 
 ## 4. Cómo se usa
 
-La barra superior tiene cinco botones de navegación (**Resumen, Órdenes, Embarques, Gastos, Costeo**) y el botón **Periodo**.
+La barra superior tiene cinco botones de navegación (**Resumen, Órdenes, Embarques, Gastos, Costeo**) y el botón **Periodo**. En el encabezado están la fecha de los datos ("Datos de Odoo al …"), el botón **↻ Actualizar** y el botón **?**.
 
 **Filtro de periodo (global).** Al abrir **Periodo ▾** se elige *Todo*, *Este año*, un *Mes* o un *Rango personalizado* (Desde/Hasta). Filtra por **fecha de la OC** (`date_order`), así que afecta Resumen, Órdenes y Embarques por arribo. **No afecta** Tracker, Calendario, Gastos ni Costeo, porque esas vistas se organizan por contenedor y no por fecha de OC.
 
@@ -91,8 +91,9 @@ Filtro *Con costeo logístico* (por defecto) o *Todos los arribos*, y buscador p
 
 ### 4.7 Otros elementos
 
-- **Botón ?** (arriba a la derecha, `#btnAyuda`): abre el manual de usuario `manual.html` en otra pestaña. Funciona aunque los datos no hayan cargado, porque está en el encabezado y no depende de la API.
-- El pie indica la hora de la última consulta: *"En vivo desde BigQuery · actualizado dd/mm/aaaa hh:mm · N contenedores"*.
+- **Botón ↻ Actualizar** (`#btnActualizar`): consulta Odoo en ese momento (`/api/oc-data?fresh=<marca de tiempo>`, sin caché), repinta todo conservando el periodo elegido y muestra un aviso. Si Odoo falla, avisa en rojo y deja los datos anteriores. Después de usarse queda bloqueado 30 s para no saturar Odoo.
+- **Fecha de los datos** (`#dataStamp` y pie `#footerInfo`): *"Datos de Odoo al dd/mm/aaaa hh:mm"* es la hora real en que se consultó Odoo (campo `snapshot` de la respuesta), no la hora en que se abrió la página.
+- **Botón ?** (`#btnAyuda`): abre el manual de usuario `manual.html` en otra pestaña. Funciona aunque los datos no hayan cargado.
 
 ## 5. Arquitectura
 
@@ -100,43 +101,47 @@ Filtro *Con costeo logístico* (por defecto) o *Todos los arribos*, y buscador p
 flowchart LR
   U["Usuario (navegador)"] -->|"abre"| H["index.html (Vercel, estático)"]
   H -->|"fetch /api/oc-data"| F["Function api/oc-data.js (Vercel, Node)"]
-  F -->|"service account dashboard-plannernuevo"| BQ[("BigQuery odooconnector-491517.odoo_data")]
-  O["Odoo 18 (etcetera.xmarts.net)"] -.->|"réplica de tablas"| BQ
+  H -->|"botón Actualizar: /api/oc-data?fresh=…"| F
+  F -->|"JSON-RPC, usuario de integración, solo lectura"| O["Odoo 18 (etcetera.xmarts.net)"]
   G["GitHub Moradinetc/seguimiento-oc"] -->|"push a main = deploy"| H
 ```
 
-El navegador descarga `index.html`, que no trae datos. Al cargar, llama a `/api/oc-data`. Esa function corre en los servidores de Vercel y se autentica contra BigQuery con un service account cuyas credenciales están en variables de entorno de Vercel. Lanza **4 consultas en paralelo** y regresa un solo JSON. El navegador hace todo lo demás (filtros, KPIs, gráficas, ordenamiento) en memoria.
+El navegador descarga `index.html`, que no trae datos. Al cargar, llama a `/api/oc-data`. Esa function corre en Vercel, se autentica en Odoo con un usuario de integración (credenciales en variables de entorno de Vercel) y hace **7 llamadas JSON-RPC** (`authenticate` y 6 `search_read`, cinco en paralelo). Con eso arma un solo JSON con el mismo formato que tenía la versión de BigQuery, así el front no cambió. El navegador hace todo lo demás (filtros, KPIs, gráficas, ordenamiento) en memoria.
 
-**Frescura:** Vercel guarda la respuesta 5 minutos (`s-maxage=300`) y puede servir la anterior hasta 10 minutos más mientras refresca en segundo plano (`stale-while-revalidate=600`). Por eso un cambio en BigQuery tarda como máximo unos 5 minutos en verse. La frescura de BigQuery respecto a Odoo depende de la réplica Odoo → BigQuery. ⚠️ Por confirmar: herramienta y frecuencia de esa sincronización.
+**No se guarda nada:** no hay base de datos intermedia ni corte nocturno. Cada consulta sale de Odoo en ese momento.
+
+**Frescura y protección de Odoo:** una carga normal de la página puede reutilizar por 2 minutos la respuesta que Vercel ya tenga (`s-maxage=120, stale-while-revalidate=60`), para que si varias personas abren el tablero a la vez no se consulte Odoo varias veces. El botón **Actualizar** salta esa caché siempre (`?fresh=` con marca de tiempo y `Cache-Control: no-store`). La hora que se muestra es la de la consulta real a Odoo.
+
+**Volumen:** ~507 OCs, ~4,400 líneas, ~450 recepciones con contenedor, ~17 facturas de importación, ~61 contenedores y ~512 líneas de costeo (octubre 2026). La consulta completa tarda unos segundos; `vercel.json` le da hasta 60 s.
 
 ## 6. Fuentes de datos y reglas de negocio
 
 ### 6.1 Fuentes
 
-Todas son tablas de BigQuery en `odooconnector-491517.odoo_data`, región US, y se usan solo para lectura.
+Todas se leen de Odoo con `search_read`, solo lectura, con `active_test: false`.
 
-| Tabla | Modelo de Odoo | Para qué se usa |
+| Modelo de Odoo | Filtro | Para qué se usa |
 |---|---|---|
-| `purchase_order` | `purchase.order` | OCs: proveedor, fechas, estado, monto, tipo de cambio, arribo, comprador |
-| `purchase_order_line` | `purchase.order.line` | Piezas pedidas y recibidas, SKUs distintos por OC |
-| `stock_picking` | `stock.picking` | Liga contenedor ↔ OC (campo `origin` + `container_id`) |
-| `containers_move` | modelo de contenedores (personalizado) | Estado, transporte, fechas del contenedor, liga a landed cost |
-| `stock_landed_cost_lines` | `stock.landed.cost.lines` | Conceptos y montos de gastos de importación |
-| `account_move` | `account.move` | Facturas de proveedor: estatus de pago y saldo pendiente |
+| `purchase.order` | todas | OCs: proveedor (`x_nombre_prov`), fechas, estado, monto, tipo de cambio, arribo (`x_nombre_arribo_oc`), producción (`x_studio_fecha_de_produccin`), comprador (`user_id`) |
+| `purchase.order.line` | `display_type = false` | Piezas pedidas y recibidas, SKUs distintos por OC |
+| `stock.picking` | `container_id != false` | Liga contenedor ↔ OC (campo `origin` + `container_id`) |
+| `containers.move` | todos | Estado, transporte, fechas, costeo ligado (`landed_cost_id`), transportista (`shipment_by`) y aduana (`customs`) |
+| `stock.landed.cost.lines` | `cost_id` en los costeos de los contenedores | Conceptos y montos de gastos de importación |
+| `account.move` | `move_type = in_invoice`, `state = posted`, `invoice_origin != false` | Facturas de proveedor: estatus de pago y saldo pendiente |
 
-### 6.2 Consultas (en `api/oc-data.js`)
+### 6.2 Cómo se arma la respuesta (función `construir()` en `api/oc-data.js`)
 
-La respuesta JSON tiene estas llaves: `_todos`, `containers`, `gastosDesglose`, `costeoExtra` y `snapshot`. El código completo de cada consulta está en las constantes `SQL_TODOS`, `SQL_CONTAINERS`, `SQL_GASTOS` y `SQL_COSTEO`.
+La respuesta tiene las llaves `_todos`, `containers`, `gastosDesglose`, `costeoExtra`, `snapshot` (hora de la consulta a Odoo, ISO UTC) y `fuente: "odoo"`. Reproduce exactamente las reglas de las consultas SQL que se usaban con BigQuery:
 
-- **`SQL_TODOS` → `_todos`**: una fila por OC en estado `purchase`, `draft` o `cancel`. Agrega piezas y SKUs de las líneas, el último contenedor ligado (mayor `id`) y el estatus de pago a partir de sus facturas. El front la separa en `ordenes` (`purchase`), `cotizaciones` (`draft`) y `canceladas` (`cancel`).
-- **`SQL_CONTAINERS` → `containers`**: una fila por contenedor, con sus fechas (pickup, shipment, customs, clearance, arrival y ETA), número de OCs, monto en MXN, piezas, arribos (unidos con `|`) y gasto logístico total. Ordena por estado y ETA.
-- **`SQL_GASTOS` → `gastosDesglose`**: una fila por línea de landed cost (`container_id`, `concepto` en `INITCAP`, `monto`).
-- **`SQL_COSTEO` → `costeoExtra`**: por contenedor, la suma de SKUs, el número de proveedores y la lista de proveedores separados por `·`.
+- **`_todos`**: una fila por OC en estado `purchase`, `done` (bloqueada, se entrega como `purchase`), `draft` o `cancel`. Agrega piezas y SKUs de las líneas, el último contenedor ligado (mayor `id`) y el estatus de pago a partir de sus facturas. Trae además `comprador_nombre`. El front la separa en `ordenes`, `cotizaciones` y `canceladas`.
+- **`containers`**: una fila por contenedor, con fechas, número de OCs, monto en MXN, piezas, arribos (unidos con `|`), gasto logístico y los nombres de transportista y aduana (`transportista_nombre`, `aduana_nombre`).
+- **`gastosDesglose`**: una fila por línea de costeo (`concepto` con mayúscula inicial por palabra).
+- **`costeoExtra`**: por contenedor, la suma de SKUs, el número de proveedores y su lista separada por `·`.
 
 **Trampas conocidas del modelo de datos:**
 
-- `stock_picking.origin` y `account_move.invoice_origin` pueden traer **varias OCs separadas por coma**. Por eso se usa `UNNEST(SPLIT(campo, ','))` con `TRIM`. Si se cambia a una igualdad simple, se pierden OCs.
-- Las fechas tipo timestamp se convierten con `FORMAT_TIMESTAMP(..., 'America/Mexico_City')`. Sin eso, las OCs de la noche caen en el día siguiente.
+- `stock.picking.origin` y `account.move.invoice_origin` pueden traer **varias OCs separadas por coma** (las facturas de importación `FCIMP/...` cubren hasta 29 OCs). Se separan por coma y se recortan espacios. El saldo pendiente de una factura compartida se cuenta en cada OC que cubre.
+- Los campos datetime de Odoo vienen en UTC: se convierten a fecha de `America/Mexico_City` (`dateLocal()`). Los campos tipo date se usan tal cual.
 - El monto en MXN es `amount_total / currency_rate`. En Odoo, `currency_rate` es "unidades de moneda de la OC por 1 MXN".
 
 ### 6.3 Cálculos y reglas
@@ -155,24 +160,25 @@ La respuesta JSON tiene estas llaves: `_todos`, `containers`, `gastosDesglose`, 
 | % de avance | `or` 10 · `tr` 45 · `ad` 75 · `ar` 100 (`de` = 0, ⚠️ revisar si debería ir entre 75 y 100) | Constante `AVANCE_PCT` |
 | Ubicación estimada | `or` Puerto origen · `ad` Aduana · `ar` CEDIS · `tr` según transporte (Alta mar / Tránsito aéreo / terrestre) | Función `ubicacionEstimada` |
 | SKU's | Productos distintos por OC, sumados entre OCs (un mismo SKU en dos OCs cuenta dos veces) | `purchase_order_line.product_id` |
-| Gasto logístico | Suma de `price_unit` de las líneas de landed cost del contenedor | `stock_landed_cost_lines` |
+| Gasto logístico | Suma de `price_unit` de las líneas de costeo del contenedor | `stock.landed.cost.lines` |
 | Impuestos vs operativos | Conceptos `Prv`, `Igi`, `Dta` = impuestos; el resto = operativos | Constantes `CST_IMPUESTOS` / `GASTO_IMPUESTOS` |
 | Total compra (costeo) | Factura (monto MXN de las OCs del contenedor) + total de logística | Función `buildCosteoCard` |
-| Comprador | `user_id` traducido con la tabla fija `COMPRADOR_NOMBRE`; si no está, "Comprador #id" | `index.html`, línea ~760 |
+| Comprador | Abreviatura de la tabla fija `COMPRADOR_NOMBRE` si existe; si no, el nombre del usuario en Odoo (`comprador_nombre`) | `nombreComprador()` |
 
 ## 7. Estructura del código
 
 ```
 seguimiento-oc/
 ├── index.html        Todo el front: HTML, CSS y JS (~2,150 líneas, 169 KB; incluye logo y favicon en base64)
-├── api/oc-data.js    Function de Vercel: 4 consultas a BigQuery → JSON
-├── package.json      Dependencia @google-cloud/bigquery ^7.9.0, Node ≥ 18
+├── api/oc-data.js    Function de Vercel: lee Odoo por JSON-RPC y arma el JSON
+├── vercel.json       maxDuration de 60 s para la function
+├── package.json      Sin dependencias (usa fetch nativo de Node ≥ 18)
 ├── .gitignore        node_modules, .vercel, .env*
 ├── manual.html       Manual de usuario final (un solo archivo con capturas incrustadas, ~1.9 MB); lo abre el botón ?
 └── DOCUMENTACION.md  Este archivo (documentación técnica para IT)
 ```
 
-**Arranque:** al final del `<script>`, `cargarDatosVivo()` muestra "Consultando BigQuery…", hace `fetch('/api/oc-data')` y llena las variables globales `ordenes`, `cotizaciones`, `canceladas`, `containers`, `gastosDesglose` y `costeoExtra`. Luego oculta `#loading`, muestra `#app`, escribe el pie (`#footerInfo`) y llama a `populateFilterRango()` y `render()`. Si la API falla, deja en `#loading` el mensaje de error y un botón **Reintentar**.
+**Arranque:** al final del `<script>`, `cargarDatosVivo()` muestra "Consultando Odoo…", pide los datos con `pedirDatos(false)` y los pasa a `aplicarDatos()`, que llena `ordenes`, `cotizaciones`, `canceladas`, `containers`, `gastosDesglose`, `costeoExtra` y los nombres de compradores, escribe la fecha de los datos y llama a `populateFilterRango()` y `render()`. Si la API falla, deja en `#loading` el mensaje de error y un botón **Reintentar**. El botón Actualizar llama `actualizarDesdeOdoo()` → `pedirDatos(true)` → `aplicarDatos()`.
 
 | Función | Qué hace |
 |---|---|
@@ -195,13 +201,15 @@ seguimiento-oc/
 
 | Variable / credencial | Para qué | Dónde se configura | Quién la administra |
 |---|---|---|---|
-| `BQ_CLIENT_EMAIL` | Correo del service account: `dashboard-plannernuevo@odooconnector-491517.iam.gserviceaccount.com` | Vercel → proyecto → Settings → Environment Variables | Sistemas |
-| `BQ_PRIVATE_KEY` | Llave privada de ese service account, completa, de `-----BEGIN PRIVATE KEY-----` a `-----END PRIVATE KEY-----\n` | Igual que la anterior | Sistemas |
-| Service account `dashboard-plannernuevo` | Lectura de BigQuery. Necesita *BigQuery Job User* y *BigQuery Data Viewer* | Google Cloud → IAM → Cuentas de servicio | Sistemas |
+| `ODOO_URL` | Dirección de Odoo, p. ej. `https://etcetera.xmarts.net` (con o sin `/odoo`) | Vercel → proyecto → Settings → Environment Variables | Sistemas |
+| `ODOO_DB` | Nombre de la base de datos de Odoo | Igual | Sistemas |
+| `ODOO_USER` | Usuario de integración de Odoo | Igual | Sistemas |
+| `ODOO_API_KEY` | Llave API de ese usuario | Igual | Sistemas |
+| Usuario de integración en Odoo | Solo lectura en Compras, Inventario, Contabilidad y Contenedores | Odoo → Ajustes → Usuarios | Sistemas |
 
-El mismo service account lo usa también el **Planner x SKU**, aunque cada sistema tiene su propia llave. Rotar o borrar la llave de este proyecto no afecta al Planner; quitarle roles a la cuenta sí afecta a los dos.
+Es la misma convención de variables de la app **Descuentos en Odoo** en Vercel. Las variables `BQ_CLIENT_EMAIL` y `BQ_PRIVATE_KEY` de la versión anterior ya no se usan y se pueden borrar de Vercel.
 
-**Accesos que necesita alguien nuevo:** colaborador en el repo `Moradinetc/seguimiento-oc` (GitHub), miembro del equipo `etcetera-accesorios` en Vercel y, para cambiar consultas, acceso de lectura a BigQuery en el proyecto `odooconnector-491517`. Se piden a Coordinación de Sistemas.
+**Accesos que necesita alguien nuevo:** colaborador en el repo `Moradinetc/seguimiento-oc` (GitHub) y miembro del equipo `etcetera-accesorios` en Vercel. Se piden a Coordinación de Sistemas.
 
 ## 9. Despliegue
 
@@ -210,7 +218,7 @@ El mismo service account lo usa también el **Planner x SKU**, aunque cada siste
 1. Haz el cambio y pasa el QA (sección 12).
 2. Sube los archivos modificados a `main` en GitHub: **Add file → Upload files** reemplaza el archivo, o haz `git push`.
 3. Vercel detecta el commit y despliega solo, en menos de 1 minuto. El avance se ve en Vercel → proyecto → Deployments.
-4. Verifica abriendo `https://seguimiento-oc.vercel.app/api/oc-data` (debe empezar con `{"_todos":[`) y el tablero (el pie debe decir "En vivo… actualizado" con la hora actual).
+4. Verifica abriendo `https://seguimiento-oc.vercel.app/api/oc-data` (debe empezar con `{"_todos":[`) y el tablero (el encabezado debe decir "Datos de Odoo al" con la hora actual).
 
 La configuración del proyecto en Vercel es Framework Preset **Other**, sin build command. Vercel publica `index.html` como estático y `api/*.js` como functions.
 
@@ -225,7 +233,7 @@ vercel env pull    # baja las variables a .env.local (no se sube a Git)
 vercel dev         # http://localhost:3000
 ```
 
-Abrir `index.html` directo con doble clic **no funciona**, porque no existe `/api/oc-data`.
+`vercel env pull` trae las 4 variables de Odoo. Abrir `index.html` directo con doble clic **no funciona**, porque no existe `/api/oc-data`.
 
 ### 9.3 Regresar a la versión anterior
 
@@ -233,23 +241,24 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 
 ## 10. Operación diaria
 
-- No hay tareas programadas: los datos se consultan cuando alguien abre el tablero (con la caché de 5 minutos).
-- **Logs:** Vercel → proyecto → Logs (filtrar por `/api/oc-data`). Los errores de la function salen ahí con el mensaje de BigQuery.
-- **Costos:** cada consulta completa procesa del orden de decenas de MB en BigQuery. La caché evita que cada visita vuelva a consultar.
+- No hay tareas programadas ni cortes: los datos se consultan a Odoo cuando alguien abre el tablero (con la caché de 2 minutos) o presiona **Actualizar**.
+- **Ya no depende del conector de BigQuery** ni de sus acciones planificadas. Si otros sistemas usan las tablas `purchase_order`, `account_move`, `containers_move`, etc. de BigQuery, esas siguen necesitando su programación en el conector.
+- **Logs:** Vercel → proyecto → Logs (filtrar por `/api/oc-data`). Los errores muestran el mensaje de Odoo.
+- **Carga sobre Odoo:** 7 llamadas de lectura por consulta. Con la caché y el bloqueo de 30 s del botón, es mínima.
 - **Plan de Vercel:** la cuenta está en plan **Hobby**, que según las condiciones de Vercel es para uso no comercial. Ver sección 14.
 
 ## 11. Solución de problemas
 
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
-| Pantalla "No se pudieron cargar los datos… Faltan las variables de entorno BQ_CLIENT_EMAIL / BQ_PRIVATE_KEY" | Variables no creadas, mal escritas o creadas después del último deploy | Revisarlas en Vercel → Settings → Environment Variables (entorno *Production*) y hacer **Redeploy** |
-| Error con `invalid_grant`, `DECODER routines` o `error:1E08010C` | `BQ_PRIVATE_KEY` incompleta o con comillas | Pegarla de nuevo completa, con BEGIN/END y sin comillas. Si se perdió, crear otra llave del service account |
-| Error `Access Denied` / `Permission denied` | Al service account le falta un rol, o se cambió de proyecto | Dar *BigQuery Job User* y *BigQuery Data Viewer* en `odooconnector-491517` |
-| Error `Unrecognized name` / `Name x not found` | Cambió o se eliminó una columna en la tabla de BigQuery | Revisar el esquema con `INFORMATION_SCHEMA.COLUMNS` y ajustar la consulta en `api/oc-data.js` |
-| Se queda en "Consultando BigQuery…" | La function tarda mucho o hay un error de JS en el front | Abrir la consola del navegador (F12) y los Logs de Vercel |
-| Un cambio en Odoo no se ve | Caché de Vercel (≤ 5 min) o la réplica Odoo → BigQuery aún no corre | Esperar unos minutos; si persiste, revisar la réplica |
-| Una OC aparece sin contenedor o con pago "sin factura" | En Odoo, la recepción no tiene `container_id`, o la factura no está publicada o no lleva la OC en `invoice_origin` | Corregir el dato en Odoo (lo hace Sistemas o el área dueña del dato) |
-| Comprador aparece como "Comprador #123" | Usuario nuevo que no está en `COMPRADOR_NOMBRE` | Agregar el id y nombre en `index.html` |
+| "No se pudieron cargar los datos de Odoo… Faltan variables de entorno en Vercel: …" | Variables no creadas, mal escritas o creadas después del último deploy | Revisarlas en Vercel → Settings → Environment Variables (entorno *Production*) y hacer **Redeploy** |
+| "Odoo rechazó el usuario o la llave API" | Usuario, base o llave incorrectos, o la llave se revocó | Revisar `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY`; generar una llave nueva en Odoo si hace falta |
+| "Odoo: Access Denied" / "You are not allowed to access…" | Al usuario de integración le falta permiso de lectura en algún modelo | Darle lectura en Compras, Inventario, Contabilidad o Contenedores, según el modelo del mensaje |
+| "Odoo: Invalid field …" | Se renombró o eliminó un campo en Odoo (por ejemplo un campo de Studio) | Ajustar el campo en `api/oc-data.js` |
+| "Odoo respondió HTTP 502/504" o tarda mucho | Odoo saturado o en mantenimiento (Xmarts) | Reintentar en unos minutos; revisar Logs de Vercel |
+| Un cambio en Odoo no se ve | La página tomó la respuesta en caché (≤ 2 min) | Presionar **Actualizar** |
+| Una OC aparece sin contenedor o con pago "sin factura" | En Odoo, la recepción no tiene contenedor, o la factura no está publicada o no lleva la OC en *Documento origen* | Corregir el dato en Odoo |
+| Comprador con nombre completo en lugar de abreviatura | Usuario nuevo que no está en `COMPRADOR_NOMBRE` | Opcional: agregar su abreviatura en `index.html` |
 | El CSV abre con acentos raros | Se abrió con otro programa o se quitó el BOM | Abrir con Excel; el archivo ya incluye BOM UTF-8 |
 
 ## 12. Cómo hacer cambios sin romper nada
@@ -257,24 +266,22 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 1. **La versión vigente está en GitHub (`main`)**, no en copias locales ni en el Netlify viejo.
 2. **QA obligatorio antes de subir.** Congela la versión que funciona, aplica el cambio en una copia, valida la sintaxis (`node --check` del JS) y corre la prueba de humo de vistas y functions, comparando antes y después (skill `qa-despliegue-etc`). Nada que funcionaba puede dejar de funcionar.
 3. **No renombres** ids del HTML, funciones globales ni las llaves del JSON (`_todos`, `containers`, `gastosDesglose`, `costeoExtra`): el front depende de ellos. Agrega, no renombres.
-4. **Para una consulta nueva o modificada**, pruébala primero en la consola de BigQuery (o en *dry run*) y luego cópiala a `api/oc-data.js`.
+4. **Para leer un campo nuevo de Odoo**, confirma primero que existe y está almacenado (`ir.model.fields`), agrégalo a la lista de `fields` del `searchRead` correspondiente y luego al objeto que arma `construir()`.
 5. **Para un KPI nuevo**, calcula en `computeKPIs()` y pinta con `kpiCard()` siguiendo las tarjetas existentes.
-6. **Si el dato está mal en Odoo, se corrige en Odoo.** Los cambios en Odoo de producción solo los aplica Coordinación de Sistemas.
+6. **Si el dato está mal en Odoo, se corrige en Odoo.** Los cambios en Odoo de producción solo los aplica Coordinación de Sistemas. La function solo lee: nunca agregues escrituras a Odoo en ella.
 7. **Nunca subas credenciales al repo.** `.gitignore` ya excluye `.env*`.
 
 ## 13. Relación con otros sistemas
 
-- **Odoo 18** es la fuente original de todos los datos. Cambios en los campos personalizados (`x_nombre_arribo_oc`, `x_nombre_prov`, `x_studio_fecha_de_produccin`) o en el modelo de contenedores rompen las consultas.
-- **BigQuery `odoo_data`** lo comparten varios dashboards (Dashboard Comercial, Planner x SKU, Landed Cost tracker y otros). Un cambio de esquema afecta a todos.
-- **Service account `dashboard-plannernuevo`**: compartido con el Planner x SKU (ver sección 8).
+- **Odoo 18** es la única fuente. Cambios en los campos personalizados (`x_nombre_arribo_oc`, `x_nombre_prov`, `x_studio_fecha_de_produccin`), en el módulo de contenedores (`containers.move`) o en los permisos del usuario de integración afectan al tablero.
+- **App Descuentos en Odoo** usa la misma convención de variables (`ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY`). Si comparten usuario de integración, rotar su llave afecta a ambas.
+- **BigQuery**: el tablero ya no lo usa. Las tablas `purchase_order`, `account_move`, `containers_move`, etc. siguen existiendo para otros usos y dependen de las acciones planificadas del conector.
 - **Landed Cost tracker** y **Tracking cadena de suministros** muestran información parecida (costeo y marítimos). Si cambia una regla de negocio, hay que revisar que coincida en los tres.
 
 ## 14. Limitaciones conocidas y pendientes
 
 - **Plan Hobby de Vercel** para uso comercial: conviene pasarlo a Pro.
 - El **conector de Vercel en Claude** no tiene acceso al equipo `etcetera-accesorios`, así que los despliegues se hacen por GitHub. Pendiente reautorizarlo.
-- `COMPRADOR_NOMBRE` es una tabla fija en el código. Lo ideal es traer el nombre desde `res_users`/`res_partner` en BigQuery.
-- Transportista y aduana se muestran como `#id`, no por nombre.
 - El IVA de importación no está en Odoo, así que el Costeo no lo incluye.
 - El estado `de` (Despachado) tiene 0 % de avance en `AVANCE_PCT`. ⚠️ Revisar si es intencional.
 - **El Calendario de llegadas no se puede abrir**: falta el botón en el HTML (sección 4.4).
@@ -284,6 +291,7 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 
 | Fecha | Cambio |
 |---|---|
+| 08/10/2026 | Lee **directo de Odoo** por JSON-RPC (sin BigQuery ni almacenamiento); botón **↻ Actualizar**; fecha real de los datos en encabezado y pie; nombres de comprador, transportista y aduana desde Odoo; OCs bloqueadas cuentan como confirmadas. Motivo: las tablas de BigQuery del tablero no tenían acción planificada en el conector y llevaban 8 días sin actualizarse |
 | 07/10/2026 | Botón **?** en el encabezado que abre el manual de usuario (`manual.html`); se agregan `manual.html` y `DOCUMENTACION.md` al repo |
 | 07/10/2026 | Migración a Vercel con datos en vivo desde BigQuery (`/api/oc-data`); repo `Moradinetc/seguimiento-oc` |
 | 06/10/2026 | Último snapshot estático (507 OCs, 61 contenedores) en Netlify |
@@ -293,11 +301,10 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 ## 16. Preguntas abiertas
 
 1. ¿Quiénes son los usuarios exactos del tablero y quién decide los accesos? (Dirección)
-2. ¿Con qué herramienta y cada cuánto se replica Odoo a BigQuery? (Sistemas)
-3. ¿El estado `de` (Despachado) debe tener un % de avance entre 75 y 100? (Importaciones)
-4. ¿Se debe proteger la URL con login? (Dirección / Sistemas)
-5. ¿Se pasa el proyecto a un plan Pro de Vercel? (Sistemas / Finanzas)
-6. ¿Se restaura el botón del **Calendario** de llegadas? (Sistemas)
+2. ¿El estado `de` (Despachado) debe tener un % de avance entre 75 y 100? (Importaciones)
+3. ¿Se debe proteger la URL con login? (Dirección / Sistemas)
+4. ¿Se pasa el proyecto a un plan Pro de Vercel? (Sistemas / Finanzas)
+5. ¿Se restaura el botón del **Calendario** de llegadas? (Sistemas)
 
 ---
 

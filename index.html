@@ -276,6 +276,19 @@
     border:1.5px solid var(--accent);color:var(--accent);background:#fff;font-weight:800;font-size:18px;line-height:1;text-decoration:none;
     transition:background .15s,color .15s,box-shadow .15s;}
   .help-btn:hover,.help-btn:focus-visible{background:var(--accent);color:#fff;box-shadow:0 3px 10px -3px rgba(95,37,159,0.5);outline:none;}
+  .hdr-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
+  .refresh-btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:999px;border:1.5px solid var(--accent);
+    color:var(--accent);background:#fff;font:inherit;font-weight:700;font-size:13.5px;cursor:pointer;transition:background .15s,color .15s;}
+  .refresh-btn:hover:not(:disabled),.refresh-btn:focus-visible{background:var(--accent);color:#fff;outline:none;}
+  .refresh-btn:disabled{opacity:.6;cursor:progress;}
+  .refresh-btn .ico{display:inline-block;font-size:16px;line-height:1;}
+  .refresh-btn.girando .ico{animation:girar 1s linear infinite;}
+  @keyframes girar{to{transform:rotate(360deg)}}
+  .data-stamp{font-size:12px;color:var(--muted,#6B6475);white-space:nowrap;}
+  @media (max-width:760px){.data-stamp{display:none}.refresh-btn .txt{display:none}.refresh-btn{padding:0 11px}}
+  .toast-etc{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#241B2E;color:#fff;padding:12px 18px;border-radius:12px;
+    font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9999;max-width:90vw;}
+  .toast-etc.err{background:#B42318;}
   header .brand h1{margin:0;font-size:18px;font-weight:700;color:var(--accent);letter-spacing:-.2px;}
   header .brand .sub{color:var(--muted);font-size:12px;margin-top:2px;font-weight:500;}
   @media (max-width:560px){ header .brand-div, header .brand-text{display:none;} }
@@ -448,7 +461,11 @@
       <h1>Seguimiento de Órdenes de Compra</h1>
     </div>
   </div>
-  <a class="help-btn" id="btnAyuda" href="manual.html" target="_blank" rel="noopener" title="Manual de usuario" aria-label="Abrir el manual de usuario">?</a>
+  <div class="hdr-actions">
+    <span class="data-stamp" id="dataStamp"></span>
+    <button type="button" class="refresh-btn" id="btnActualizar" title="Traer los datos de Odoo en este momento" aria-label="Actualizar datos desde Odoo" disabled><span class="ico">↻</span><span class="txt">Actualizar</span></button>
+    <a class="help-btn" id="btnAyuda" href="manual.html" target="_blank" rel="noopener" title="Manual de usuario" aria-label="Abrir el manual de usuario">?</a>
+  </div>
 </header>
 
 <nav class="topnav" id="topnav">
@@ -487,7 +504,7 @@
 </nav>
 
 <main>
-  <div id="loading">Consultando BigQuery…</div>
+  <div id="loading">Consultando Odoo…</div>
   <div id="app" style="display:none;">
 
     <section class="view active" id="view-resumen">
@@ -772,9 +789,11 @@ const COMPRADOR_NOMBRE = {
   2: 'Sistemas',
   184: 'Maggie'
 };
+// Nombres que llegan de Odoo (complementan a COMPRADOR_NOMBRE, que guarda las abreviaturas usadas en el tablero)
+const COMPRADOR_ODOO = {};
 function nombreComprador(id){
   if(!id) return '—';
-  return COMPRADOR_NOMBRE[id] || `Comprador #${id}`;
+  return COMPRADOR_NOMBRE[id] || COMPRADOR_ODOO[id] || `Comprador #${id}`;
 }
 let filterMes = 'all';
 let filterDesde = '';
@@ -1477,8 +1496,8 @@ function contSortValue(c, field){
     case 'monto_mxn': return c.monto_mxn || 0;
     case 'gasto_logistico': return c.gasto_logistico || 0;
     case 'pct_gasto': return (c.gasto_logistico && c.monto_mxn) ? c.gasto_logistico/c.monto_mxn : 0;
-    case 'transportista_id': return c.transportista_id || 0;
-    case 'aduana_id': return c.aduana_id || 0;
+    case 'transportista_id': return (c.transportista_nombre || '').toLowerCase();
+    case 'aduana_id': return (c.aduana_nombre || '').toLowerCase();
     default: return 0;
   }
 }
@@ -1540,8 +1559,8 @@ function renderContenedores(){
       <td class="num">${fmtMoney(c.monto_mxn)}</td>
       <td class="num ${c.gasto_logistico?'gasto-hover':''}" data-container="${c.name}" style="${c.gasto_logistico?'color:var(--warn);font-weight:700;':''}">${c.gasto_logistico ? fmtMoney(c.gasto_logistico) : '—'}</td>
       <td class="num" style="${c.gasto_logistico?'color:var(--warn);font-weight:700;':''}">${c.gasto_logistico && c.monto_mxn ? (c.gasto_logistico/c.monto_mxn*100).toFixed(1)+'%' : '—'}</td>
-      <td class="num">${c.transportista_id ? '#'+c.transportista_id : '—'}</td>
-      <td class="num">${c.aduana_id ? '#'+c.aduana_id : '—'}</td>
+      <td class="num">${c.transportista_id ? escapeHtml(c.transportista_nombre || ('#'+c.transportista_id)) : '—'}</td>
+      <td class="num">${c.aduana_id ? escapeHtml(c.aduana_nombre || ('#'+c.aduana_id)) : '—'}</td>
     </tr>`;
   }).join('');
 
@@ -2079,48 +2098,92 @@ document.getElementById('filterHasta').addEventListener('change', (e)=>{
   render();
 });
 
-// --- DATOS EN VIVO: /api/oc-data consulta BigQuery en cada carga (cache 5 min en Vercel) ---
+// --- DATOS EN VIVO DIRECTO DE ODOO: /api/oc-data consulta Odoo (JSON-RPC) al abrir; el botón Actualizar fuerza una consulta nueva ---
+function escapeHtml(t){ return String(t==null?'':t).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
 function fmtSnapshot(iso){
   try{
     const d = new Date(iso);
     return d.toLocaleString('es-MX',{timeZone:'America/Tijuana',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   }catch(e){ return ''; }
 }
+function toastEtc(msg, esError){
+  const t = document.createElement('div');
+  t.className = 'toast-etc' + (esError ? ' err' : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), esError ? 7000 : 3500);
+}
+function aplicarDatos(data){
+  const _todos = Array.isArray(data._todos) ? data._todos : [];
+  ordenes = _todos.filter(o=>o.estado_oc==='purchase');
+  cotizaciones = _todos.filter(o=>o.estado_oc==='draft');
+  canceladas = _todos.filter(o=>o.estado_oc==='cancel');
+  _todos.forEach(o=>{ if(o.comprador_id && o.comprador_nombre) COMPRADOR_ODOO[o.comprador_id] = o.comprador_nombre; });
+  (function(){ const el = document.getElementById('navCountOrdenes'); if(el) el.textContent = ordenes.length; })();
+  containers = Array.isArray(data.containers) ? data.containers : [];
+  gastosDesglose = Array.isArray(data.gastosDesglose) ? data.gastosDesglose : [];
+  Object.keys(costeoExtra).forEach(k=>delete costeoExtra[k]);
+  Object.assign(costeoExtra, data.costeoExtra || {});
+  const cuando = fmtSnapshot(data.snapshot || new Date().toISOString());
+  document.getElementById('footerInfo').textContent =
+    'Datos de Odoo al ' + cuando + ' · ' + ordenes.length + ' órdenes de compra · ' + containers.length + ' contenedores';
+  const st = document.getElementById('dataStamp'); if(st) st.textContent = 'Datos de Odoo al ' + cuando;
+  const sel = document.getElementById('filterMesSel'); const mesSel = sel ? sel.value : '';
+  populateFilterRango();
+  if(sel && mesSel && [...sel.options].some(o=>o.value===mesSel)) sel.value = mesSel;
+  render();
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(fitKpiValues);
+  fitKpiValues();
+}
+async function pedirDatos(fresco){
+  const url = fresco ? '/api/oc-data?fresh=' + Date.now() : '/api/oc-data';
+  const r = await fetch(url, {headers:{'Accept':'application/json'}, cache: fresco ? 'no-store' : 'default'});
+  let data = null;
+  try{ data = await r.json(); }catch(e){ data = null; }
+  if(!r.ok || !data || data.error) throw new Error((data && data.error) || ('HTTP ' + r.status));
+  return data;
+}
 async function cargarDatosVivo(){
   const ld = document.getElementById('loading');
+  ld.textContent = 'Consultando Odoo…';
   try{
-    const r = await fetch('/api/oc-data', {headers:{'Accept':'application/json'}});
-    let data = null;
-    try{ data = await r.json(); }catch(e){ data = null; }
-    if(!r.ok || !data || data.error){
-      throw new Error((data && data.error) || ('HTTP ' + r.status));
-    }
-    const _todos = Array.isArray(data._todos) ? data._todos : [];
-    ordenes = _todos.filter(o=>o.estado_oc==='purchase');
-    cotizaciones = _todos.filter(o=>o.estado_oc==='draft');
-    canceladas = _todos.filter(o=>o.estado_oc==='cancel');
-    (function(){ const el = document.getElementById('navCountOrdenes'); if(el) el.textContent = ordenes.length; })();
-    containers = Array.isArray(data.containers) ? data.containers : [];
-    gastosDesglose = Array.isArray(data.gastosDesglose) ? data.gastosDesglose : [];
-    Object.keys(costeoExtra).forEach(k=>delete costeoExtra[k]);
-    Object.assign(costeoExtra, data.costeoExtra || {});
+    const data = await pedirDatos(false);
     ld.style.display = 'none';
     document.getElementById('app').style.display = 'block';
-    document.getElementById('footerInfo').textContent =
-      'En vivo desde BigQuery · actualizado ' + fmtSnapshot(data.snapshot || new Date().toISOString()) + ' · ' + containers.length + ' contenedores';
-    populateFilterRango();
-    render();
-    if(document.fonts && document.fonts.ready) document.fonts.ready.then(fitKpiValues);
-    fitKpiValues();
+    aplicarDatos(data);
   }catch(err){
     console.error('oc-data:', err);
     ld.innerHTML = '<div style="max-width:520px;margin:0 auto;line-height:1.5">'
-      + '<div style="font-weight:700;color:var(--ink,#241B2E);margin-bottom:6px">No se pudieron cargar los datos de BigQuery</div>'
-      + '<div style="font-size:13px">' + String(err.message||err).replace(/[<>&]/g,'') + '</div>'
+      + '<div style="font-weight:700;color:var(--ink,#241B2E);margin-bottom:6px">No se pudieron cargar los datos de Odoo</div>'
+      + '<div style="font-size:13px">' + escapeHtml(err.message||err) + '</div>'
       + '<button onclick="location.reload()" style="margin-top:14px;padding:8px 16px;border-radius:8px;border:1px solid #5F259F;background:#5F259F;color:#fff;cursor:pointer;font-weight:600">Reintentar</button>'
       + '</div>';
+  }finally{
+    const b = document.getElementById('btnActualizar'); if(b) b.disabled = false;
   }
 }
+// Botón Actualizar: consulta Odoo en ese momento. Se bloquea 30 s después de usarse para no saturar Odoo.
+let actualizando = false;
+async function actualizarDesdeOdoo(){
+  const b = document.getElementById('btnActualizar');
+  if(actualizando || !b) return;
+  actualizando = true;
+  b.disabled = true; b.classList.add('girando'); b.querySelector('.txt').textContent = 'Actualizando…';
+  try{
+    const data = await pedirDatos(true);
+    const app = document.getElementById('app');
+    if(app.style.display !== 'block'){ document.getElementById('loading').style.display='none'; app.style.display='block'; }
+    aplicarDatos(data);
+    toastEtc('Datos actualizados desde Odoo');
+  }catch(err){
+    console.error('actualizar:', err);
+    toastEtc('No se pudo actualizar: ' + (err.message||err) + '. Se siguen mostrando los datos anteriores.', true);
+  }finally{
+    b.classList.remove('girando'); b.querySelector('.txt').textContent = 'Actualizar';
+    setTimeout(()=>{ actualizando = false; b.disabled = false; }, 30000);
+  }
+}
+document.getElementById('btnActualizar').addEventListener('click', actualizarDesdeOdoo);
 cargarDatosVivo();
 window.addEventListener('load', fitKpiValues);
 
