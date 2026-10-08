@@ -1242,7 +1242,7 @@ function tagDividida(o, d){
     return `<span class="tag-div" title="${escapeHtml(tip)}">dividida</span>`;
   }
   // % real de las piezas de la OC en esta parte (1 decimal; entre todas las partes suman 100.0 %)
-  const pctTxt = d.pct != null ? d.pct.toLocaleString('es-MX',{minimumFractionDigits:1, maximumFractionDigits:1}) + ' %' : '';
+  const pctTxt = d.pct != null ? d.pct.toLocaleString('es-MX',{minimumFractionDigits:1, maximumFractionDigits:4}) + ' %' : '';   // los decimales que traiga (99.97 %, 0.03 %)
   const otrosTxt = otros ? otros.split(', ').map(x=>x||'sin arribo asignado').join(', ') : '';
   const tip = d.fuente === 'pendiente'
     ? `Pendiente sin arribo · ${pctTxt}\nPor recibir: ${fmtInt(d.piezas)} pz · ${fmtMoney(d.monto)}\nEl resto viene en ${otrosTxt}`
