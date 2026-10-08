@@ -381,10 +381,19 @@
   .trk-sel:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--border));}
   /* Fila de arribo expandible → sus OCs */
   tr.emb-row{cursor:pointer;}
-  .emb-search{width:100%;max-width:360px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:13.5px;background:#fff;}
-  .emb-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(95,37,159,.12);}
-  .emb-searchbar{display:flex;align-items:center;gap:12px;margin:0 0 12px;flex-wrap:wrap;}
-  .emb-searchbar .cnt{font-size:12.5px;color:var(--muted);}
+  /* Buscador con chips (Embarques por arribo / Tracker), en el encabezado */
+  .emb-searchbar{flex:1 1 360px;min-width:260px;max-width:620px;display:flex;flex-direction:column;gap:4px;}
+  .chipbox{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:40px;padding:5px 8px;border:1px solid var(--border);border-radius:11px;background:#fff;cursor:text;}
+  .chipbox:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(95,37,159,.12);}
+  .chipbox .emb-search{flex:1 1 160px;min-width:140px;border:0;outline:none;font:inherit;font-size:13.5px;padding:5px 4px;background:transparent;}
+  .arr-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:3px 4px 3px 10px;border-radius:999px;background:var(--accent-soft,#EFE8F7);color:var(--accent);font-size:12.5px;font-weight:700;line-height:1.4;white-space:nowrap;}
+  .arr-chip.libre{background:#F1EFF4;color:#5E5868;}
+  .arr-chip button{appearance:none;border:0;background:transparent;color:inherit;cursor:pointer;width:20px;height:20px;border-radius:50%;font-size:14px;line-height:20px;padding:0;opacity:.75;}
+  .arr-chip button:hover,.arr-chip button:focus-visible{background:rgba(95,37,159,.15);opacity:1;outline:none;}
+  .chip-clear{appearance:none;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;font-weight:700;padding:4px 6px;border-radius:8px;margin-left:auto;}
+  .chip-clear:hover{color:var(--accent);background:var(--accent-soft,#EFE8F7);}
+  .emb-searchbar .hint{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--muted);padding:0 4px;}
+  .emb-searchbar .cnt{font-weight:700;color:var(--accent);}
   .tag-div{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;background:#FFF4E0;color:#8A5208;vertical-align:middle;cursor:help;}
   .tag-inf{display:block;margin-top:3px;font-size:10.5px;color:var(--muted);font-weight:600;}
   tr.emb-row:hover{background:var(--accent-soft) !important;}
@@ -573,16 +582,22 @@
           <h3 id="embTitulo" style="margin-bottom:6px;">Embarques por arribo</h3>
           <div class="cardsub" id="tabSub">OCs agrupadas por embarque · clic en un arribo para ver sus OCs</div>
         </div>
+        <div class="emb-searchbar" id="embSearchBar">
+          <div class="chipbox" id="embChipBox">
+            <span id="embChips" style="display:contents;"></span>
+            <input id="embSearch" class="emb-search" type="text" list="embArribosList" autocomplete="off"
+              placeholder="Arribo, OC, proveedor o contenedor… Enter para agregar" aria-label="Agregar arribo u otro filtro de búsqueda">
+            <button type="button" class="chip-clear" id="embChipsClear" title="Quitar todos los filtros" style="display:none;">Limpiar</button>
+          </div>
+          <datalist id="embArribosList"></datalist>
+          <div class="hint"><span>Agrega varios arribos: se muestran los que coincidan con cualquiera.</span><span class="cnt" id="embSearchCnt"></span></div>
+        </div>
         <div class="emb-toggle" id="embToggle">
           <button class="etg active" type="button" data-etab="embarques">Embarques por arribo</button>
           <button class="etg" type="button" data-etab="contenedores">Tracker de embarques</button>
         </div>
       </div>
 
-      <div class="emb-searchbar" id="embSearchBar" data-panel-bar="embarques">
-        <input id="embSearch" class="emb-search" type="search" placeholder="Buscar arribo, OC, proveedor o contenedor…" aria-label="Buscar en embarques y contenedores">
-        <span class="cnt" id="embSearchCnt"></span>
-      </div>
       <div id="tabEmbarques" data-panel="embarques" class="tablewrap" style="max-height:280px;">
         <table>
           <thead><tr><th>Arribo</th><th style="text-align:center;">OCs</th><th style="text-align:center;">Recibidas</th><th style="text-align:center;">Parciales</th><th style="text-align:center;">No recibidas</th><th style="text-align:center;">Piezas</th><th style="text-align:center;">Monto (MXN)</th></tr></thead>
@@ -1141,7 +1156,35 @@ function embOcsDetail(ocs){
     <thead><tr><th>OC</th><th>Proveedor</th><th class="num">Pz ped.</th><th class="num">Pz rec.</th><th class="num">SKUs</th><th>Recepción</th><th class="num">Monto (MXN)</th><th>Pago</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
-let embSearchQ = '';
+let embSearchQ = '';          // texto que se está escribiendo (aún no es chip)
+let embChips = [];            // [{t:'Air #4-26', exacto:true}] — se guardan en este navegador
+const EMB_CHIPS_KEY = 'seguimiento-oc:chips-embarques';
+let embArribosConocidos = new Set();   // nombres de arribo (minúsculas) para saber si un chip es un arribo exacto
+let embArribosNombre = new Map();      // minúsculas → nombre tal como está en Odoo
+try{ const g = JSON.parse(localStorage.getItem(EMB_CHIPS_KEY) || '[]'); if(Array.isArray(g)) embChips = g.filter(x=>x && x.t); }catch(e){}
+function guardarChips(){ try{ localStorage.setItem(EMB_CHIPS_KEY, JSON.stringify(embChips)); }catch(e){} }
+// Términos activos: cada chip + lo que se está escribiendo. Un arribo/contenedor se muestra si coincide con CUALQUIERA.
+function embTerminos(){
+  const ts = embChips.map(c=>({t:c.t.toLowerCase(), exacto:!!c.exacto}));
+  const q = embSearchQ.trim().toLowerCase();
+  if(q) ts.push({t:q, exacto:false});
+  return ts;
+}
+function pintarChips(){
+  const box = document.getElementById('embChips'); if(!box) return;
+  box.innerHTML = embChips.map((c,i)=>`<span class="arr-chip${c.exacto?'':' libre'}" title="${c.exacto?'Arribo':'Texto libre: busca en arribo, OC, proveedor y contenedor'}">${escapeHtml(c.t)}<button type="button" data-i="${i}" aria-label="Quitar ${escapeHtml(c.t)}">×</button></span>`).join('');
+  const clr = document.getElementById('embChipsClear'); if(clr) clr.style.display = (embChips.length || embSearchQ.trim()) ? 'inline-block' : 'none';
+  const inp = document.getElementById('embSearch');
+  if(inp) inp.placeholder = embChips.length ? 'Agregar otro…' : 'Arribo, OC, proveedor o contenedor… Enter para agregar';
+}
+function agregarChip(txt){
+  const t = String(txt||'').trim(); if(!t) return false;
+  if(embChips.some(c=>c.t.toLowerCase()===t.toLowerCase())) return false;
+  const canon = embArribosNombre.get(t.toLowerCase());
+  embChips.push(canon ? {t: canon, exacto: true} : {t, exacto: false});
+  guardarChips(); return true;
+}
+function aplicarBusquedaEmb(){ pintarChips(); renderEmbarques(); renderContenedores(); }
 let embVistaActual = 'embarques';
 const embConteo = { arribos: '', contenedores: '' };
 function actualizarContadorBusqueda(){
@@ -1149,7 +1192,13 @@ function actualizarContadorBusqueda(){
   el.textContent = embVistaActual === 'contenedores' ? embConteo.contenedores : embConteo.arribos;
 }
 // ¿El contenedor coincide con la búsqueda? Por folio, arribo, transportista, aduana o las OCs que trae.
-function contCoincide(c, q){
+function contCoincide(c, terminos){
+  if(!terminos || !terminos.length) return true;
+  return terminos.some(({t, exacto}) => exacto
+    ? (c.arribos||'').toLowerCase().split(' | ').includes(t)
+    : contCoincideTexto(c, t));
+}
+function contCoincideTexto(c, q){
   if(!q) return true;
   if((c.name||'').toLowerCase().includes(q) || (c.arribos||'').toLowerCase().includes(q)
      || (c.transportista_nombre||'').toLowerCase().includes(q) || (c.aduana_nombre||'').toLowerCase().includes(q)) return true;
@@ -1183,12 +1232,20 @@ function renderEmbarques(){
   });
   let todos = Object.values(byArribo).sort((a,b)=> a.arribo==='Sin arribo asignado' ? 1 : b.arribo==='Sin arribo asignado' ? -1 : b.monto-a.monto);
   const totalArribos = todos.length;
-  const q = embSearchQ.trim().toLowerCase();
+  // Lista de sugerencias (autocompletar) con todos los arribos del periodo
+  embArribosConocidos = new Set(todos.map(a=>a.arribo.toLowerCase()));
+  embArribosNombre = new Map(todos.map(a=>[a.arribo.toLowerCase(), a.arribo]));
+  const dl = document.getElementById('embArribosList');
+  if(dl) dl.innerHTML = todos.filter(a=>a.arribo!=='Sin arribo asignado').map(a=>a.arribo).sort((x,y)=>x.localeCompare(y,'es',{numeric:true})).map(n=>`<option value="${escapeHtml(n)}"></option>`).join('');
+  const terminos = embTerminos();
+  const q = terminos.length > 0;
   if(q){
-    todos = todos.filter(a=> a.arribo.toLowerCase().includes(q) || a.ocs.some(x=>{
-      const o = x.oc;
-      return o.name.toLowerCase().includes(q) || (o.proveedor||'').toLowerCase().includes(q) || (o.container_name||'').toLowerCase().includes(q);
-    }));
+    todos = todos.filter(a=> terminos.some(({t, exacto}) => exacto
+      ? a.arribo.toLowerCase() === t
+      : (a.arribo.toLowerCase().includes(t) || a.ocs.some(x=>{
+          const o = x.oc;
+          return o.name.toLowerCase().includes(t) || (o.proveedor||'').toLowerCase().includes(t) || (o.container_name||'').toLowerCase().includes(t);
+        }))));
   }
   embConteo.arribos = q ? `${todos.length} de ${totalArribos} arribos` : '';
   actualizarContadorBusqueda();
@@ -1589,11 +1646,12 @@ function renderContenedores(){
 
   updateContSortIndicators();
 
-  const qCont = embSearchQ.trim().toLowerCase();
+  const termCont = embTerminos();
+  const qCont = termCont.length > 0;
   const todos = todosSinFiltrar.filter(c =>
     (currentPuntualidadFilter === 'all' || etapaPuntualidad(c) === currentPuntualidadFilter) &&
     (currentEstatusFilter === 'all' || c.estado === currentEstatusFilter) &&
-    contCoincide(c, qCont)
+    contCoincide(c, termCont)
   );
   embConteo.contenedores = qCont ? `${todos.length} de ${containers.length} contenedores` : '';
   actualizarContadorBusqueda();
@@ -2262,8 +2320,27 @@ async function actualizarDesdeOdoo(){
 document.getElementById('btnActualizar').addEventListener('click', actualizarDesdeOdoo);
 (function(){
   const inp = document.getElementById('embSearch'); if(!inp) return;
+  const box = document.getElementById('embChipBox');
   let t = null;
-  inp.addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(()=>{ embSearchQ = inp.value; renderEmbarques(); renderContenedores(); }, 150); });
+  const confirmar = ()=>{ if(agregarChip(inp.value)){ inp.value=''; embSearchQ=''; aplicarBusquedaEmb(); } };
+  inp.addEventListener('input', (e)=>{
+    // Si se eligió un arribo de la lista de sugerencias, se convierte en chip de inmediato
+    const v = inp.value.trim();
+    if(e.inputType === 'insertReplacementText' || (!e.inputType && embArribosConocidos.has(v.toLowerCase()))){ confirmar(); return; }
+    clearTimeout(t); t = setTimeout(()=>{ embSearchQ = inp.value; aplicarBusquedaEmb(); }, 150);
+  });
+  inp.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter' || e.key === ','){ e.preventDefault(); clearTimeout(t); confirmar(); }
+    else if(e.key === 'Backspace' && !inp.value && embChips.length){ embChips.pop(); guardarChips(); aplicarBusquedaEmb(); }
+    else if(e.key === 'Escape'){ inp.value=''; embSearchQ=''; aplicarBusquedaEmb(); }
+  });
+  box.addEventListener('click', (e)=>{
+    const b = e.target.closest('.arr-chip button');
+    if(b){ embChips.splice(Number(b.dataset.i),1); guardarChips(); aplicarBusquedaEmb(); inp.focus(); return; }
+    if(e.target === box) inp.focus();
+  });
+  document.getElementById('embChipsClear').addEventListener('click', ()=>{ embChips=[]; inp.value=''; embSearchQ=''; guardarChips(); aplicarBusquedaEmb(); inp.focus(); });
+  pintarChips();
 })();
 cargarDatosVivo();
 window.addEventListener('load', fitKpiValues);
