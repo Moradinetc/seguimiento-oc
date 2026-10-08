@@ -37,7 +37,7 @@ async function login() {
 }
 
 function searchRead(uid, model, domain, fields, order) {
-  const kw = { fields, context: { lang: 'es_MX', active_test: false } };
+  const kw = { fields, context: { active_test: false } };   // sin 'lang': Odoo usa su idioma por defecto (es_MX no está instalado)
   if (order) kw.order = order;
   return rpc('object', 'execute_kw', [process.env.ODOO_DB, uid, process.env.ODOO_API_KEY, model, 'search_read', [domain], kw]);
 }
