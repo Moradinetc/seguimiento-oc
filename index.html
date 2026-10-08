@@ -1120,8 +1120,9 @@ function renderTopProveedores(){
 function tagDividida(o, d){
   if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
   const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
-  const como = d.fuente==='recepciones' ? 'según sus recepciones' : 'en partes iguales (sin recepciones etiquetadas)';
-  const tip = `OC dividida: también viene en ${otros}. A este arribo le corresponde el ${Math.round(d.fraccion*100)}% (${fmtInt(d.piezas)} pz · ${fmtMoney(d.monto)}), ${como}. Total de la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}.`;
+  const tip = d.fuente==='recepciones'
+    ? `OC dividida: también viene en ${otros}. En este arribo, según sus recepciones en Odoo: ${fmtInt(d.piezas)} pz de demanda, ${fmtInt(d.piezas_recibidas ?? 0)} recibidas y ${fmtInt(d.skus ?? 0)} SKUs. El monto (${fmtMoney(d.monto)}) es el ${Math.round(d.fraccion*100)}% de la OC, proporcional a sus piezas. Total de la OC: ${fmtInt(o.piezas_pedidas)} pz pedidas · ${fmtInt(o.piezas_recibidas)} recibidas · ${fmtInt(o.num_skus)} SKUs · ${fmtMoney(o.amount_total)}.`
+    : `OC dividida: también viene en ${otros}. Sus recepciones no indican el arribo, así que se reparte en partes iguales (${Math.round(d.fraccion*100)}%). Total de la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}.`;
   return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${Math.round(d.fraccion*100)}%</span>`;
 }
 function embOcsDetail(ocs){
@@ -1130,8 +1131,8 @@ function embOcsDetail(ocs){
     <td style="font-weight:700;color:var(--accent);white-space:nowrap;">${o.name}${tagDividida(o,d)}</td>
     <td>${o.proveedor||'—'}</td>
     <td class="num">${fmtInt(d ? d.piezas : o.piezas_pedidas)}</td>
-    <td class="num">${fmtInt(d ? Math.round((o.piezas_recibidas||0) * d.fraccion) : o.piezas_recibidas)}</td>
-    <td class="num">${fmtInt(o.num_skus)}</td>
+    <td class="num">${fmtInt(d ? (d.piezas_recibidas ?? Math.round((o.piezas_recibidas||0) * d.fraccion)) : o.piezas_recibidas)}</td>
+    <td class="num">${d ? (d.skus != null ? fmtInt(d.skus) : '<span title="Sin recepciones etiquetadas con este arribo: no se sabe qué productos trae">—</span>') : fmtInt(o.num_skus)}</td>
     <td>${pillReceipt(o.receipt_status)}</td>
     <td class="num">${fmtMoney(d ? d.monto : o.amount_total)}</td>
     <td>${pillPago(o.estatus_pago)}</td>
@@ -1164,7 +1165,7 @@ function renderEmbarques(){
     // Una OC dividida ("Air #4-26, Air #5-26") cuenta en cada arribo con su parte de piezas y monto.
     const dets = (o.arribos_detalle && o.arribos_detalle.length)
       ? o.arribos_detalle
-      : [{arribo: o.arribo || '', piezas: o.piezas_pedidas, monto: o.amount_total || 0, fraccion: 1}];
+      : [{arribo: o.arribo || '', piezas: o.piezas_pedidas, piezas_recibidas: o.piezas_recibidas, skus: o.num_skus, monto: o.amount_total || 0, fraccion: 1}];
     dets.forEach(d=>{
       const key = d.arribo || 'Sin arribo asignado';
       if(!byArribo[key]) byArribo[key] = {arribo:key, num_ocs:0, recibidas:0, parciales:0, no_recibidas:0, piezas:0, monto:0, folios:[], ocs:[], divididas:0};
