@@ -64,7 +64,7 @@ async function construir() {
   const [pos, lines, picks, bills, conts, arrCat] = await Promise.all([
     searchRead(uid, 'purchase.order', [], ['name', 'x_nombre_prov', 'date_order', 'state', 'receipt_status', 'amount_total',
       'currency_rate', 'date_planned', 'x_studio_fecha_de_produccin', 'x_nombre_arribo_oc', 'user_id'], 'date_order asc, id asc'),
-    searchRead(uid, 'purchase.order.line', [['display_type', '=', false]], ['order_id', 'product_id', 'product_qty', 'qty_received']),
+    searchRead(uid, 'purchase.order.line', [['display_type', '=', false]], ['order_id', 'product_id', 'product_qty', 'qty_received', 'price_unit', 'price_subtotal']),
     searchRead(uid, 'stock.picking', [['container_id', '!=', false]], ['origin', 'container_id', 'state', 'date_done', 'x_studio_arribo']),
     searchRead(uid, 'account.move', [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['invoice_origin', '!=', false]],
       ['invoice_origin', 'payment_state', 'amount_residual']),
@@ -129,10 +129,17 @@ async function construir() {
     a.rec += Number(l.qty_received) || 0;
     if (l.product_id) a.prods.add(m2oId(l.product_id));
   }
-  // Reparto de cada OC dividida entre sus arribos, según las piezas de las recepciones etiquetadas con cada arribo.
+  // Reparto de cada OC dividida entre sus arribos, con las piezas de las recepciones etiquetadas con cada arribo.
+  // El monto NO se estima: piezas de cada producto en ese arribo × su precio unitario en la OC (neto de descuento).
   const lineaOC = new Map(lines.map((l) => [l.id, m2oId(l.order_id)]));
+  const precioLinea = new Map(lines.map((l) => {
+    const q = Number(l.product_qty) || 0;
+    const unit = q > 0 && l.price_subtotal != null ? Number(l.price_subtotal) / q : Number(l.price_unit) || 0;
+    return [l.id, unit];
+  }));
   const pickById = new Map(picksDiv.map((sp) => [sp.id, sp]));
-  // po_id → Map(arribo → { peso, dem, rec, prods }):
+  // po_id → Map(arribo → { peso, dem, rec, prods, valor }):
+  //   valor = Σ demanda × precio unitario de la línea de OC (moneda de la OC) → monto exacto del arribo
   //   peso = piezas para repartir el monto (recibidas si la recepción está hecha, demanda si no)
   //   dem  = Demanda de las recepciones de ese arribo  → "Pz pedidas" del arribo
   //   rec  = Cantidad recibida (movimientos hechos)     → "Pz recibidas" del arribo
@@ -148,9 +155,10 @@ async function construir() {
     if (!piezasArribo.has(oid)) piezasArribo.set(oid, new Map());
     const m = piezasArribo.get(oid);
     for (const t of tags) {
-      if (!m.has(t)) m.set(t, { peso: 0, dem: 0, rec: 0, prods: new Set() });
+      if (!m.has(t)) m.set(t, { peso: 0, dem: 0, rec: 0, prods: new Set(), valor: 0 });
       const a = m.get(t);
       a.peso += peso / tags.length; a.dem += dem / tags.length; a.rec += rec / tags.length;
+      a.valor += (dem * (precioLinea.get(m2oId(mv.purchase_line_id)) || 0)) / tags.length;
       if (mv.product_id && (dem > 0 || rec > 0)) a.prods.add(m2oId(mv.product_id));
     }
   }
@@ -160,10 +168,11 @@ async function construir() {
     const m = piezasArribo.get(p.id) || new Map();
     const tot = lista.reduce((s, a) => s + ((m.get(a) || {}).peso || 0), 0);
     if (tot > 0) return lista.map((a) => {
-      const x = m.get(a) || { peso: 0, dem: 0, rec: 0, prods: new Set() };
-      return { arribo: a, fraccion: x.peso / tot, fuente: 'recepciones', dem: x.dem, rec: x.rec, skus: x.prods.size };
+      const x = m.get(a) || { peso: 0, dem: 0, rec: 0, prods: new Set(), valor: 0 };
+      return { arribo: a, fraccion: x.peso / tot, fuente: 'recepciones', dem: x.dem, rec: x.rec, skus: x.prods.size, valor: x.valor };
     });
-    return lista.map((a) => ({ arribo: a, fraccion: 1 / lista.length, fuente: 'igual' }));
+    // Sin recepciones etiquetadas no hay forma de saber qué llegó en cada arribo: no se reparte (nada estimado)
+    return lista.map((a) => ({ arribo: a, fraccion: null, fuente: 'sin_datos' }));
   }
   const poByName = new Map(pos.map((p) => [p.name, p]));
   const contById = new Map(conts.map((c) => [c.id, c]));
@@ -226,21 +235,22 @@ async function construir() {
         currency_rate: p.currency_rate,
         estado_oc: p.state === 'done' ? 'purchase' : p.state,   // "Bloqueada" en Odoo = confirmada
         arribo: str(p.x_nombre_arribo_oc),
-        // Por arribo: en OCs divididas con recepciones etiquetadas, piezas y SKUs salen DIRECTO de las recepciones
-        // (Demanda / Cantidad / productos); el monto se reparte por la proporción de piezas. Si no hay recepciones
-        // etiquetadas, se reparte en partes iguales. OC de un solo arribo: valores completos de la OC.
+        // Por arribo, sin estimaciones:
+        //  - OC de un solo arribo: valores completos de la OC (monto = total de la OC en MXN).
+        //  - OC dividida con recepciones etiquetadas: piezas, recibidas y SKUs de esas recepciones; monto =
+        //    Σ piezas × precio unitario de cada producto en la OC, convertido con el tipo de cambio de la OC.
+        //  - OC dividida sin recepciones etiquetadas: null (el tablero muestra "—"); no se reparte.
         arribos_detalle: repartoArribos(p).map((d) => {
-          const deRecep = d.fuente === 'recepciones';
-          const unico = d.fuente === 'oc';
-          return {
-            arribo: d.arribo,
-            fraccion: Math.round(d.fraccion * 10000) / 10000,
-            piezas: deRecep ? Math.round(d.dem) : Math.round(q.ped * d.fraccion),
-            piezas_recibidas: deRecep ? Math.round(d.rec) : Math.round(q.rec * d.fraccion),
-            skus: deRecep ? d.skus : (unico ? q.prods.size : null),
-            monto: mx === null ? 0 : round2(mx * d.fraccion),
-            fuente: d.fuente,
-          };
+          if (d.fuente === 'oc') {
+            return { arribo: d.arribo, fraccion: 1, piezas: Math.round(q.ped), piezas_recibidas: Math.round(q.rec),
+              skus: q.prods.size, monto: mx === null ? 0 : round2(mx), fuente: 'oc' };
+          }
+          if (d.fuente === 'recepciones') {
+            return { arribo: d.arribo, fraccion: Math.round(d.fraccion * 10000) / 10000,
+              piezas: Math.round(d.dem), piezas_recibidas: Math.round(d.rec), skus: d.skus,
+              monto: p.currency_rate ? round2(d.valor / p.currency_rate) : null, fuente: 'recepciones' };
+          }
+          return { arribo: d.arribo, fraccion: null, piezas: null, piezas_recibidas: null, skus: null, monto: null, fuente: 'sin_datos' };
         }),
         container_name: c ? c.name : null,
         container_estado: c ? str(c.estado) : null,
