@@ -115,7 +115,7 @@ async function construir() {
     }
     if (picksDiv.length) {
       movesDiv = (await searchRead(uid, 'stock.move', [['picking_id', 'in', picksDiv.map((sp) => sp.id)], ['state', '!=', 'cancel']],
-        ['picking_id', 'purchase_line_id', 'product_uom_qty', 'quantity', 'state']).catch(() => [])) || [];   // opcional: sin esto se reparte en partes iguales
+        ['picking_id', 'purchase_line_id', 'product_id', 'product_uom_qty', 'quantity', 'state']).catch(() => [])) || [];   // opcional: sin esto se reparte en partes iguales
     }
   }
 
@@ -132,22 +132,37 @@ async function construir() {
   // Reparto de cada OC dividida entre sus arribos, según las piezas de las recepciones etiquetadas con cada arribo.
   const lineaOC = new Map(lines.map((l) => [l.id, m2oId(l.order_id)]));
   const pickById = new Map(picksDiv.map((sp) => [sp.id, sp]));
-  const piezasArribo = new Map();   // po_id → Map(arribo → piezas)
+  // po_id → Map(arribo → { peso, dem, rec, prods }):
+  //   peso = piezas para repartir el monto (recibidas si la recepción está hecha, demanda si no)
+  //   dem  = Demanda de las recepciones de ese arribo  → "Pz pedidas" del arribo
+  //   rec  = Cantidad recibida (movimientos hechos)     → "Pz recibidas" del arribo
+  //   prods = productos distintos que vienen en ese arribo → "SKUs" del arribo
+  const piezasArribo = new Map();
   for (const mv of movesDiv) {
     const oid = lineaOC.get(m2oId(mv.purchase_line_id)); if (!oid) continue;
     const sp = pickById.get(m2oId(mv.picking_id)); if (!sp) continue;
     const tags = nombresArriboPick(sp); if (!tags.length) continue;
-    const qty = (mv.state === 'done' ? Number(mv.quantity) : Number(mv.product_uom_qty)) || 0;
+    const dem = Number(mv.product_uom_qty) || 0;
+    const rec = mv.state === 'done' ? (Number(mv.quantity) || 0) : 0;
+    const peso = mv.state === 'done' ? rec : dem;
     if (!piezasArribo.has(oid)) piezasArribo.set(oid, new Map());
     const m = piezasArribo.get(oid);
-    for (const t of tags) m.set(t, (m.get(t) || 0) + qty / tags.length);
+    for (const t of tags) {
+      if (!m.has(t)) m.set(t, { peso: 0, dem: 0, rec: 0, prods: new Set() });
+      const a = m.get(t);
+      a.peso += peso / tags.length; a.dem += dem / tags.length; a.rec += rec / tags.length;
+      if (mv.product_id && (dem > 0 || rec > 0)) a.prods.add(m2oId(mv.product_id));
+    }
   }
   function repartoArribos(p) {
     const lista = arribosDe(p);
     if (lista.length <= 1) return lista.map((a) => ({ arribo: a, fraccion: 1, fuente: 'oc' }));
     const m = piezasArribo.get(p.id) || new Map();
-    const tot = lista.reduce((s, a) => s + (m.get(a) || 0), 0);
-    if (tot > 0) return lista.map((a) => ({ arribo: a, fraccion: (m.get(a) || 0) / tot, fuente: 'recepciones' }));
+    const tot = lista.reduce((s, a) => s + ((m.get(a) || {}).peso || 0), 0);
+    if (tot > 0) return lista.map((a) => {
+      const x = m.get(a) || { peso: 0, dem: 0, rec: 0, prods: new Set() };
+      return { arribo: a, fraccion: x.peso / tot, fuente: 'recepciones', dem: x.dem, rec: x.rec, skus: x.prods.size };
+    });
     return lista.map((a) => ({ arribo: a, fraccion: 1 / lista.length, fuente: 'igual' }));
   }
   const poByName = new Map(pos.map((p) => [p.name, p]));
@@ -211,13 +226,22 @@ async function construir() {
         currency_rate: p.currency_rate,
         estado_oc: p.state === 'done' ? 'purchase' : p.state,   // "Bloqueada" en Odoo = confirmada
         arribo: str(p.x_nombre_arribo_oc),
-        arribos_detalle: repartoArribos(p).map((d) => ({
-          arribo: d.arribo,
-          fraccion: Math.round(d.fraccion * 10000) / 10000,
-          piezas: Math.round(q.ped * d.fraccion),
-          monto: mx === null ? 0 : round2(mx * d.fraccion),
-          fuente: d.fuente,
-        })),
+        // Por arribo: en OCs divididas con recepciones etiquetadas, piezas y SKUs salen DIRECTO de las recepciones
+        // (Demanda / Cantidad / productos); el monto se reparte por la proporción de piezas. Si no hay recepciones
+        // etiquetadas, se reparte en partes iguales. OC de un solo arribo: valores completos de la OC.
+        arribos_detalle: repartoArribos(p).map((d) => {
+          const deRecep = d.fuente === 'recepciones';
+          const unico = d.fuente === 'oc';
+          return {
+            arribo: d.arribo,
+            fraccion: Math.round(d.fraccion * 10000) / 10000,
+            piezas: deRecep ? Math.round(d.dem) : Math.round(q.ped * d.fraccion),
+            piezas_recibidas: deRecep ? Math.round(d.rec) : Math.round(q.rec * d.fraccion),
+            skus: deRecep ? d.skus : (unico ? q.prods.size : null),
+            monto: mx === null ? 0 : round2(mx * d.fraccion),
+            fuente: d.fuente,
+          };
+        }),
         container_name: c ? c.name : null,
         container_estado: c ? str(c.estado) : null,
         container_transporte: c ? str(c.transport_type) : null,
