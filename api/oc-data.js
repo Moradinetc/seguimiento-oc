@@ -115,7 +115,7 @@ async function construir() {
     }
     if (picksDiv.length) {
       movesDiv = (await searchRead(uid, 'stock.move', [['picking_id', 'in', picksDiv.map((sp) => sp.id)], ['state', '!=', 'cancel']],
-        ['picking_id', 'purchase_line_id', 'product_id', 'product_uom_qty', 'quantity', 'state']).catch(() => [])) || [];   // opcional: sin esto se reparte en partes iguales
+        ['picking_id', 'purchase_line_id', 'product_id', 'product_uom_qty', 'quantity', 'state']).catch(() => [])) || [];   // opcional: sin esto las OCs divididas no se reparten (se muestran como "—")
     }
   }
 
@@ -145,6 +145,7 @@ async function construir() {
   //   rec  = Cantidad recibida (movimientos hechos)     → "Pz recibidas" del arribo
   //   prods = productos distintos que vienen en ese arribo → "SKUs" del arribo
   const piezasArribo = new Map();
+  const demEtiquetadaLinea = new Map();   // línea de OC → demanda que ya está en recepciones etiquetadas con arribo
   for (const mv of movesDiv) {
     const oid = lineaOC.get(m2oId(mv.purchase_line_id)); if (!oid) continue;
     const sp = pickById.get(m2oId(mv.picking_id)); if (!sp) continue;
@@ -152,6 +153,8 @@ async function construir() {
     const dem = Number(mv.product_uom_qty) || 0;
     const rec = mv.state === 'done' ? (Number(mv.quantity) || 0) : 0;
     const peso = mv.state === 'done' ? rec : dem;
+    const lid = m2oId(mv.purchase_line_id);
+    demEtiquetadaLinea.set(lid, (demEtiquetadaLinea.get(lid) || 0) + dem);
     if (!piezasArribo.has(oid)) piezasArribo.set(oid, new Map());
     const m = piezasArribo.get(oid);
     for (const t of tags) {
@@ -162,17 +165,46 @@ async function construir() {
       if (mv.product_id && (dem > 0 || rec > 0)) a.prods.add(m2oId(mv.product_id));
     }
   }
+  // Porcentajes con 1 decimal que siempre suman 100.0 (método del mayor residuo)
+  function pctsCien(valores) {
+    const tot = valores.reduce((s, v) => s + v, 0);
+    if (!tot) return valores.map(() => 0);
+    const crudos = valores.map((v) => (v / tot) * 1000);          // décimas de punto
+    const base = crudos.map(Math.floor);
+    let falta = 1000 - base.reduce((s, v) => s + v, 0);
+    crudos.map((v, i) => [v - base[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (falta > 0) { base[i]++; falta--; } });
+    return base.map((v) => v / 10);
+  }
+  const lineasDeOC = new Map();
+  for (const l of lines) { const oid = m2oId(l.order_id); if (!oid) continue; if (!lineasDeOC.has(oid)) lineasDeOC.set(oid, []); lineasDeOC.get(oid).push(l); }
   function repartoArribos(p) {
     const lista = arribosDe(p);
-    if (lista.length <= 1) return lista.map((a) => ({ arribo: a, fraccion: 1, fuente: 'oc' }));
+    if (lista.length <= 1) return lista.map((a) => ({ arribo: a, pct: 100, fuente: 'oc' }));
     const m = piezasArribo.get(p.id) || new Map();
-    const tot = lista.reduce((s, a) => s + ((m.get(a) || {}).peso || 0), 0);
-    if (tot > 0) return lista.map((a) => {
-      const x = m.get(a) || { peso: 0, dem: 0, rec: 0, prods: new Set(), valor: 0 };
-      return { arribo: a, fraccion: x.peso / tot, fuente: 'recepciones', dem: x.dem, rec: x.rec, skus: x.prods.size, valor: x.valor };
-    });
+    const tot = lista.reduce((s, a) => s + ((m.get(a) || {}).dem || 0), 0);
     // Sin recepciones etiquetadas no hay forma de saber qué llegó en cada arribo: no se reparte (nada estimado)
-    return lista.map((a) => ({ arribo: a, fraccion: null, fuente: 'sin_datos' }));
+    if (!(tot > 0)) return lista.map((a) => ({ arribo: a, pct: null, fuente: 'sin_datos' }));
+    const partes = lista.map((a) => {
+      const x = m.get(a) || { dem: 0, rec: 0, prods: new Set(), valor: 0 };
+      return { arribo: a, fuente: 'recepciones', dem: x.dem, rec: x.rec, skus: x.prods.size, valor: x.valor };
+    });
+    // Lo que falta por recibir y no está en ninguna recepción etiquetada → "Sin arribo asignado", producto por producto.
+    // Solo si la OC no está cerrada: si ya está "Recibida", el faltante se canceló en Odoo y no se espera.
+    if (p.receipt_status !== 'full') {
+      let dem = 0, valor = 0; const prods = new Set();
+      for (const l of (lineasDeOC.get(p.id) || [])) {
+        const resto = Math.max(0, (Number(l.product_qty) || 0) - (demEtiquetadaLinea.get(l.id) || 0));
+        if (resto > 0) { dem += resto; valor += resto * (precioLinea.get(l.id) || 0); if (l.product_id) prods.add(m2oId(l.product_id)); }
+      }
+      if (dem > 0) {
+        const recTag = partes.reduce((s, x) => s + x.rec, 0);
+        const recOC = (polq.get(p.id) || {}).rec || 0;
+        partes.push({ arribo: '', fuente: 'pendiente', dem, rec: Math.max(0, recOC - recTag), skus: prods.size, valor });
+      }
+    }
+    const pcts = pctsCien(partes.map((x) => x.dem));
+    partes.forEach((x, i) => { x.pct = pcts[i]; });
+    return partes;
   }
   const poByName = new Map(pos.map((p) => [p.name, p]));
   const contById = new Map(conts.map((c) => [c.id, c]));
@@ -240,17 +272,19 @@ async function construir() {
         //  - OC dividida con recepciones etiquetadas: piezas, recibidas y SKUs de esas recepciones; monto =
         //    Σ piezas × precio unitario de cada producto en la OC, convertido con el tipo de cambio de la OC.
         //  - OC dividida sin recepciones etiquetadas: null (el tablero muestra "—"); no se reparte.
+        //  - pct: % de las piezas de la OC en esa parte, 1 decimal, suman 100.0. Si la OC sigue abierta, lo que no está en
+        //    ninguna recepción etiquetada aparece como parte "pendiente" con arribo '' (Sin arribo asignado).
         arribos_detalle: repartoArribos(p).map((d) => {
           if (d.fuente === 'oc') {
-            return { arribo: d.arribo, fraccion: 1, piezas: Math.round(q.ped), piezas_recibidas: Math.round(q.rec),
+            return { arribo: d.arribo, pct: 100, piezas: Math.round(q.ped), piezas_recibidas: Math.round(q.rec),
               skus: q.prods.size, monto: mx === null ? 0 : round2(mx), fuente: 'oc' };
           }
-          if (d.fuente === 'recepciones') {
-            return { arribo: d.arribo, fraccion: Math.round(d.fraccion * 10000) / 10000,
+          if (d.fuente === 'recepciones' || d.fuente === 'pendiente') {
+            return { arribo: d.arribo, pct: d.pct,
               piezas: Math.round(d.dem), piezas_recibidas: Math.round(d.rec), skus: d.skus,
-              monto: p.currency_rate ? round2(d.valor / p.currency_rate) : null, fuente: 'recepciones' };
+              monto: p.currency_rate ? round2(d.valor / p.currency_rate) : null, fuente: d.fuente };
           }
-          return { arribo: d.arribo, fraccion: null, piezas: null, piezas_recibidas: null, skus: null, monto: null, fuente: 'sin_datos' };
+          return { arribo: d.arribo, pct: null, piezas: null, piezas_recibidas: null, skus: null, monto: null, fuente: 'sin_datos' };
         }),
         container_name: c ? c.name : null,
         container_estado: c ? str(c.estado) : null,
