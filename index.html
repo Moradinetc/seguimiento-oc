@@ -1199,26 +1199,45 @@ function renderTopProveedores(){
 }
 
 // "Pz rec." con marca y tooltip cuando la OC se cerró incompleta (faltante cancelado) o llegó de más.
-function celdaRecibidas(o, valor){
-  const ped = o.piezas_pedidas || 0, rec = o.piezas_recibidas || 0, dif = rec - ped;
+// d = parte de una OC dividida en ese arribo: entonces se compara lo esperado contra lo recibido EN ESE ARRIBO
+// (los totales de toda la OC están en el tooltip de la etiqueta "dividida").
+function celdaRecibidas(o, valor, d){
   const txt = fmtInt(valor);
+  let ped, rec, ambito;
+  if(d){
+    if(d.fuente !== 'recepciones' || d.piezas_recibidas == null) return txt;   // reparto estimado: no hay con qué comparar
+    ped = d.piezas || 0; rec = d.piezas_recibidas || 0; ambito = 'arribo';
+  } else {
+    ped = o.piezas_pedidas || 0; rec = o.piezas_recibidas || 0; ambito = 'oc';
+  }
+  const dif = rec - ped;
   if(!ped || dif === 0) return txt;
   const pct = Math.round(Math.abs(dif) / ped * 1000) / 10;
+  const base = ambito === 'arribo'
+    ? `En este arribo se esperaban ${fmtInt(ped)} y llegaron ${fmtInt(rec)}.`
+    : `La OC se pidió con ${fmtInt(ped)} y llegaron ${fmtInt(rec)}.`;
   if(dif < 0 && o.receipt_status === 'full'){
-    const tip = `Faltaron ${fmtInt(-dif)} piezas (${pct}%)\nLa OC se pidió con ${fmtInt(ped)} y llegaron ${fmtInt(rec)}.\nEl resto se canceló en Odoo: ya no se espera.`;
+    const tip = `Faltaron ${fmtInt(-dif)} piezas (${pct}%)\n${base}\nEl resto se canceló en Odoo: ya no se espera.`;
     return `<span class="pz-marca pz-falta" data-tip="${escapeHtml(tip)}">${txt}<span class="ico">▼</span></span>`;
   }
   if(dif > 0){
-    const tip = `Llegaron ${fmtInt(dif)} piezas de más (${pct}%)\nLa OC se pidió con ${fmtInt(ped)} y llegaron ${fmtInt(rec)}.`;
+    const tip = `Llegaron ${fmtInt(dif)} piezas de más (${pct}%)\n${base}`;
     return `<span class="pz-marca pz-sobra" data-tip="${escapeHtml(tip)}">${txt}<span class="ico">▲</span></span>`;
   }
   return txt;   // faltante aún pendiente de recibir: es normal, sin marca
+}
+// Faltante/sobrante de TODA la OC (para el tooltip de una OC dividida)
+function difOC(o){
+  const dif = (o.piezas_recibidas||0) - (o.piezas_pedidas||0);
+  if(!o.piezas_pedidas || dif === 0) return '';
+  if(dif > 0) return `\nEn toda la OC llegaron ${fmtInt(dif)} piezas de más.`;
+  return o.receipt_status === 'full' ? `\nEn toda la OC faltaron ${fmtInt(-dif)} piezas (el resto se canceló en Odoo).` : '';
 }
 function tagDividida(o, d){
   if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
   const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
   const tip = d.fuente==='recepciones'
-    ? `OC dividida: también viene en ${otros}. En este arribo, según sus recepciones en Odoo: ${fmtInt(d.piezas)} pz de demanda, ${fmtInt(d.piezas_recibidas ?? 0)} recibidas y ${fmtInt(d.skus ?? 0)} SKUs. El monto (${fmtMoney(d.monto)}) es el ${Math.round(d.fraccion*100)}% de la OC, proporcional a sus piezas. Total de la OC: ${fmtInt(o.piezas_pedidas)} pz pedidas · ${fmtInt(o.piezas_recibidas)} recibidas · ${fmtInt(o.num_skus)} SKUs · ${fmtMoney(o.amount_total)}.`
+    ? `OC dividida: también viene en ${otros}. En este arribo, según sus recepciones en Odoo: ${fmtInt(d.piezas)} pz de demanda, ${fmtInt(d.piezas_recibidas ?? 0)} recibidas y ${fmtInt(d.skus ?? 0)} SKUs. El monto (${fmtMoney(d.monto)}) es el ${Math.round(d.fraccion*100)}% de la OC, proporcional a sus piezas. Total de la OC: ${fmtInt(o.piezas_pedidas)} pz pedidas · ${fmtInt(o.piezas_recibidas)} recibidas · ${fmtInt(o.num_skus)} SKUs · ${fmtMoney(o.amount_total)}.${difOC(o)}`
     : `OC dividida: también viene en ${otros}. Sus recepciones no indican el arribo, así que se reparte en partes iguales (${Math.round(d.fraccion*100)}%). Total de la OC: ${fmtInt(o.piezas_pedidas)} pz · ${fmtMoney(o.amount_total)}.`;
   return `<span class="tag-div" title="${escapeHtml(tip)}">dividida ${Math.round(d.fraccion*100)}%</span>`;
 }
@@ -1228,7 +1247,7 @@ function embOcsDetail(ocs){
     <td style="font-weight:700;color:var(--accent);white-space:nowrap;">${o.name}${tagDividida(o,d)}</td>
     <td>${o.proveedor||'—'}</td>
     <td class="num">${fmtInt(d ? d.piezas : o.piezas_pedidas)}</td>
-    <td class="num">${celdaRecibidas(o, d ? (d.piezas_recibidas ?? Math.round((o.piezas_recibidas||0) * d.fraccion)) : o.piezas_recibidas)}</td>
+    <td class="num">${celdaRecibidas(o, d ? (d.piezas_recibidas ?? Math.round((o.piezas_recibidas||0) * d.fraccion)) : o.piezas_recibidas, d)}</td>
     <td class="num">${d ? (d.skus != null ? fmtInt(d.skus) : '<span title="Sin recepciones etiquetadas con este arribo: no se sabe qué productos trae">—</span>') : fmtInt(o.num_skus)}</td>
     <td>${pillReceipt(o.receipt_status)}</td>
     <td class="num">${fmtMoney(d ? d.monto : o.amount_total)}</td>

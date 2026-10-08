@@ -92,7 +92,7 @@ Filtro *Con costeo logístico* (por defecto) o *Todos los arribos*, y buscador p
 ### 4.7 Otros elementos
 
 - **Tooltips propios** (`#etcTip`): todo elemento con `title` o `data-tip` usa el tooltip del tablero (fondo ciruela, primera línea en dorado si hay varias), no el nativo del navegador. Un `MutationObserver` convierte los `title` en `data-tip` en cuanto se pintan; se ocultan al hacer clic, teclear, desplazar o si el elemento desaparece; en pantallas táctiles se muestran 3.5 s al tocar. Para agregar uno nuevo basta con poner `title="…"` (o `data-tip`, con `\n` para varias líneas).
-- **Marca en "Pz rec."** (`celdaRecibidas()`): **▼ rojo** si la OC está *Recibida* pero llegó menos de lo pedido (el pendiente se canceló en Odoo; tooltip con piezas y %), **▲ verde** si llegó de más. Un faltante todavía pendiente de recibir no se marca. Aparece en Órdenes y en el detalle de cada arribo.
+- **Marca en "Pz rec."** (`celdaRecibidas()`): **▼ rojo** si la OC está *Recibida* pero llegó menos de lo pedido (el pendiente se canceló en Odoo; tooltip con piezas y %), **▲ verde** si llegó de más. Un faltante todavía pendiente de recibir no se marca. Aparece en Órdenes y en el detalle de cada arribo. En una **OC dividida**, la fila de cada arribo compara la *Demanda* contra lo *recibido en ese arribo* (no los totales de la OC); el faltante/sobrante de toda la OC se muestra en el tooltip de la etiqueta *dividida N%* (`difOC()`). Si el reparto es estimado (sin recepciones etiquetadas), no se marca.
 - **Botón ↻ Actualizar** (`#btnActualizar`): consulta Odoo en ese momento (`/api/oc-data?fresh=<marca de tiempo>`, sin caché), repinta todo conservando el periodo elegido y muestra un aviso. Si Odoo falla, avisa en rojo y deja los datos anteriores. Después de usarse queda bloqueado 30 s para no saturar Odoo.
 - **Fecha de los datos** (`#dataStamp` y pie `#footerInfo`): *"Datos de Odoo al dd/mm/aaaa hh:mm"* es la hora real en que se consultó Odoo (campo `snapshot` de la respuesta), no la hora en que se abrió la página.
 - **Botón ?** (`#btnAyuda`): abre el manual de usuario `manual.html` en otra pestaña. Funciona aunque los datos no hayan cargado.
@@ -300,6 +300,7 @@ En Vercel → Deployments, elige el deploy anterior y usa **Promote to Productio
 
 | Fecha | Cambio |
 |---|---|
+| 08/10/2026 | Marca ▼/▲ de OCs divididas se calcula por arribo (antes usaba los totales de la OC y mostraba, p. ej., "4,740 → 4,750" en una fila de 3,783) |
 | 08/10/2026 | Buscador por proveedor en *Proveedores por monto* (Resumen) |
 | 08/10/2026 | Sugerencias del buscador con **lista propia** (antes la nativa del navegador): OCs y monto por arribo, teclado ↑ ↓ |
 | 08/10/2026 | **Tooltips propios** en todo el tablero; marca de **faltante cancelado / sobrante** en piezas recibidas (ej. P01366: faltaron 137 de 1,100) |
