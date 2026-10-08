@@ -1,165 +1,246 @@
-// Seguimiento OC — API de datos en vivo desde BigQuery (Vercel serverless)
-// Variables de entorno requeridas en Vercel (Settings → Environment Variables):
-//   BQ_CLIENT_EMAIL  -> client_email del service account
-//   BQ_PRIVATE_KEY   -> private_key del service account (pegarla completa, con BEGIN/END)
-const { BigQuery } = require('@google-cloud/bigquery');
+// Seguimiento OC — datos en vivo DIRECTO desde Odoo 18 (JSON-RPC), sin BigQuery ni almacenamiento.
+// Variables de entorno (Vercel › Settings › Environment Variables):
+//   ODOO_URL      ej. https://etcetera.xmarts.net   (con o sin /odoo al final)
+//   ODOO_DB       nombre de la base de datos
+//   ODOO_USER     usuario de integración (solo lectura en Compras, Inventario, Contabilidad y Contenedores)
+//   ODOO_API_KEY  llave API de ese usuario
+// GET /api/oc-data            → respuesta cacheable 2 min en Vercel (protege a Odoo si muchos abren a la vez)
+// GET /api/oc-data?fresh=1    → consulta Odoo en ese momento (botón "Actualizar"), sin caché
+// La respuesta conserva el mismo formato que la versión con BigQuery: _todos, containers, gastosDesglose, costeoExtra, snapshot.
 
-const PROJECT = 'odooconnector-491517';
-const LOCATION = 'US';
-const DS = '`odooconnector-491517.odoo_data';
+const TZ = 'America/Mexico_City';
 
-const SQL_TODOS = `
-WITH polq AS (
-  SELECT order_id, SUM(product_qty) AS piezas_pedidas, SUM(qty_received) AS piezas_recibidas, COUNT(DISTINCT product_id) AS num_skus
-  FROM ${DS}.purchase_order_line\` GROUP BY order_id
-),
-pairs AS (
-  SELECT DISTINCT sp.container_id, TRIM(o) AS po_name
-  FROM ${DS}.stock_picking\` sp, UNNEST(SPLIT(sp.origin, ',')) AS o
-  WHERE sp.container_id IS NOT NULL
-),
-cont AS (
-  SELECT po_name, ARRAY_AGG(STRUCT(cm.name AS container_name, cm.estado AS container_estado, cm.transport_type AS container_transporte,
-    FORMAT_TIMESTAMP('%Y-%m-%d', cm.expected_date, 'America/Mexico_City') AS container_eta, CAST(cm.arrival_date AS STRING) AS container_llegada)
-    ORDER BY cm.id DESC LIMIT 1)[OFFSET(0)] AS c
-  FROM pairs JOIN ${DS}.containers_move\` cm ON cm.id = pairs.container_id GROUP BY po_name
-),
-bills AS (
-  SELECT TRIM(o) AS po_name, am.payment_state, am.amount_residual
-  FROM ${DS}.account_move\` am, UNNEST(SPLIT(am.invoice_origin, ',')) AS o
-  WHERE am.move_type='in_invoice' AND am.state='posted'
-),
-pay AS (
-  SELECT po_name, COUNT(*) AS n, ROUND(SUM(amount_residual),2) AS monto_pendiente,
-    LOGICAL_AND(payment_state IN ('paid','in_payment','reversed')) AS all_paid,
-    LOGICAL_OR(payment_state='partial') AS any_partial,
-    LOGICAL_OR(payment_state IN ('paid','in_payment','reversed')) AS any_paid
-  FROM bills GROUP BY po_name
-)
-SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(
-  po.name, po.x_nombre_prov AS proveedor,
-  FORMAT_TIMESTAMP('%Y-%m-%d', po.date_order, 'America/Mexico_City') AS fecha,
-  IF(po.state='cancel','cancel', po.receipt_status) AS receipt_status,
-  ROUND(SAFE_DIVIDE(po.amount_total, po.currency_rate),2) AS amount_total,
-  IFNULL(CAST(polq.piezas_pedidas AS INT64),0) AS piezas_pedidas,
-  IFNULL(CAST(polq.piezas_recibidas AS INT64),0) AS piezas_recibidas,
-  IFNULL(pay.monto_pendiente,0) AS monto_pendiente,
-  CASE WHEN pay.n IS NULL THEN 'sin_factura' WHEN pay.all_paid THEN 'pagada'
-       WHEN pay.any_partial OR (pay.any_paid AND NOT pay.all_paid) THEN 'parcial' ELSE 'no_pagada' END AS estatus_pago,
-  FORMAT_TIMESTAMP('%Y-%m-%d', po.date_planned, 'America/Mexico_City') AS fecha_planeada,
-  FORMAT_TIMESTAMP('%Y-%m-%d', po.x_studio_fecha_de_produccin, 'America/Mexico_City') AS fecha_produccion,
-  po.currency_rate, po.state AS estado_oc, po.x_nombre_arribo_oc AS arribo,
-  cont.c.container_name, cont.c.container_estado, cont.c.container_transporte, cont.c.container_eta, cont.c.container_llegada,
-  po.user_id AS comprador_id, IFNULL(CAST(polq.num_skus AS INT64),0) AS num_skus
-) ORDER BY CASE po.state WHEN 'purchase' THEN 0 WHEN 'draft' THEN 1 WHEN 'cancel' THEN 2 ELSE 3 END, po.date_order)) AS json_out
-FROM ${DS}.purchase_order\` po
-LEFT JOIN polq ON polq.order_id = po.id
-LEFT JOIN cont ON cont.po_name = po.name
-LEFT JOIN pay ON pay.po_name = po.name
-WHERE po.state IN ('purchase','draft','cancel')`;
-
-const SQL_CONTAINERS = `
-WITH po AS (
-  SELECT po.id, po.name, po.x_nombre_arribo_oc AS arribo, SAFE_DIVIDE(po.amount_total, po.currency_rate) AS monto_mxn
-  FROM ${DS}.purchase_order\` po
-),
-polq AS (SELECT order_id, SUM(product_qty) AS piezas FROM ${DS}.purchase_order_line\` GROUP BY order_id),
-pairs AS (
-  SELECT DISTINCT sp.container_id, TRIM(o) AS po_name
-  FROM ${DS}.stock_picking\` sp, UNNEST(SPLIT(sp.origin, ',')) AS o WHERE sp.container_id IS NOT NULL
-),
-agg AS (
-  SELECT pr.container_id, COUNT(DISTINCT po.name) AS num_ocs, ROUND(SUM(po.monto_mxn),2) AS monto_mxn,
-         CAST(SUM(polq.piezas) AS INT64) AS piezas, STRING_AGG(DISTINCT po.arribo, ' | ') AS arribos
-  FROM pairs pr JOIN po ON po.name = pr.po_name LEFT JOIN polq ON polq.order_id = po.id GROUP BY pr.container_id
-),
-gasto AS (
-  SELECT cm.id AS container_id, ROUND(SUM(l.price_unit),2) AS gasto_logistico
-  FROM ${DS}.containers_move\` cm
-  JOIN ${DS}.stock_landed_cost_lines\` l ON l.cost_id = cm.landed_cost_id
-  WHERE l.name IS NOT NULL GROUP BY cm.id
-)
-SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(
-  cm.id, cm.name, cm.estado, cm.transport_type AS transporte,
-  CAST(cm.pickup_date AS STRING) AS pickup, CAST(cm.shipment_date AS STRING) AS shipment,
-  CAST(cm.customs_date AS STRING) AS customs, CAST(cm.clearance_date AS STRING) AS clearance,
-  CAST(cm.arrival_date AS STRING) AS arrival,
-  FORMAT_TIMESTAMP('%Y-%m-%d', cm.expected_date, 'America/Mexico_City') AS eta,
-  agg.num_ocs, agg.monto_mxn, agg.arribos, agg.piezas, gasto.gasto_logistico,
-  cm.shipment_by AS transportista_id, cm.customs AS aduana_id
-) ORDER BY CASE cm.estado WHEN 'or' THEN 0 WHEN 'tr' THEN 1 WHEN 'ad' THEN 2 WHEN 'de' THEN 3 WHEN 'ar' THEN 4 ELSE 5 END, cm.expected_date)) AS json_out
-FROM ${DS}.containers_move\` cm
-LEFT JOIN agg ON agg.container_id = cm.id
-LEFT JOIN gasto ON gasto.container_id = cm.id`;
-
-const SQL_GASTOS = `
-SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(
-  cm.id AS container_id, cm.name AS container_name, INITCAP(l.name) AS concepto, ROUND(l.price_unit,2) AS monto
-) ORDER BY cm.id, l.id)) AS json_out
-FROM ${DS}.containers_move\` cm
-JOIN ${DS}.stock_landed_cost_lines\` l ON l.cost_id = cm.landed_cost_id
-WHERE cm.landed_cost_id IS NOT NULL AND l.name IS NOT NULL`;
-
-const SQL_COSTEO = `
-WITH pairs AS (
-  SELECT DISTINCT sp.container_id, TRIM(o) AS po_name
-  FROM ${DS}.stock_picking\` sp, UNNEST(SPLIT(sp.origin, ',')) AS o WHERE sp.container_id IS NOT NULL
-),
-posk AS (
-  SELECT po.id, po.name, po.x_nombre_prov AS proveedor,
-    (SELECT COUNT(DISTINCT pol.product_id) FROM ${DS}.purchase_order_line\` pol WHERE pol.order_id = po.id) AS skus
-  FROM ${DS}.purchase_order\` po
-)
-SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(container_id, skus, num_prov, proveedores))) AS json_out
-FROM (
-  SELECT pr.container_id, SUM(posk.skus) AS skus, COUNT(DISTINCT posk.proveedor) AS num_prov,
-         STRING_AGG(DISTINCT posk.proveedor, ' · ' ORDER BY posk.proveedor) AS proveedores
-  FROM pairs pr JOIN posk ON posk.name = pr.po_name GROUP BY pr.container_id
-)`;
-
-let _bq = null;
-function getBQ() {
-  if (_bq) return _bq;
-  const pk = (process.env.BQ_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-  _bq = new BigQuery({
-    projectId: PROJECT,
-    credentials: { client_email: process.env.BQ_CLIENT_EMAIL, private_key: pk },
-  });
-  return _bq;
+function baseUrl() {
+  return String(process.env.ODOO_URL || '').trim().replace(/\/+$/, '').replace(/\/odoo$/, '');
 }
 
-async function runJson(bq, sql) {
-  const [rows] = await bq.query({ query: sql, location: LOCATION });
-  const s = rows && rows[0] ? rows[0].json_out : null;
-  return s ? JSON.parse(s) : [];
+let rpcId = 0;
+async function rpc(service, method, args) {
+  const r = await fetch(baseUrl() + '/jsonrpc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'call', id: ++rpcId, params: { service, method, args } }),
+  });
+  if (!r.ok) throw new Error('Odoo respondió HTTP ' + r.status);
+  const j = await r.json();
+  if (j.error) {
+    const d = j.error.data || {};
+    throw new Error('Odoo: ' + (d.message || j.error.message || 'error desconocido'));
+  }
+  return j.result;
+}
+
+async function login() {
+  const uid = await rpc('common', 'authenticate', [process.env.ODOO_DB, process.env.ODOO_USER, process.env.ODOO_API_KEY, {}]);
+  if (!uid) throw new Error('Odoo rechazó el usuario o la llave API (revisa ODOO_DB, ODOO_USER y ODOO_API_KEY).');
+  return uid;
+}
+
+function searchRead(uid, model, domain, fields, order) {
+  const kw = { fields, context: { lang: 'es_MX', active_test: false } };
+  if (order) kw.order = order;
+  return rpc('object', 'execute_kw', [process.env.ODOO_DB, uid, process.env.ODOO_API_KEY, model, 'search_read', [domain], kw]);
+}
+
+// ---- utilidades de formato (equivalentes a las funciones usadas en las consultas de BigQuery) ----
+const m2oId = (v) => (Array.isArray(v) ? v[0] : (v || null));
+const m2oName = (v) => (Array.isArray(v) ? v[1] : null);
+const str = (v) => (v === false || v === undefined ? null : v);
+function dateLocal(v) {              // datetime de Odoo (UTC) → 'YYYY-MM-DD' en hora de México
+  if (!v) return null;
+  const d = new Date(String(v).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return null;
+  return d.toLocaleDateString('en-CA', { timeZone: TZ });
+}
+const dateOnly = (v) => (v ? String(v).slice(0, 10) : null);   // campos tipo date
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const initcap = (s) => String(s).toLowerCase().replace(/(^|[^a-záéíóúüñ0-9])([a-záéíóúüñ])/g, (m, a, b) => a + b.toUpperCase());
+const splitOrigin = (s) => (s ? String(s).split(',').map((x) => x.trim()).filter(Boolean) : []);
+const ESTADO_RANK = { or: 0, tr: 1, ad: 2, de: 3, ar: 4 };
+
+async function construir() {
+  const uid = await login();
+
+  const [pos, lines, picks, bills, conts] = await Promise.all([
+    searchRead(uid, 'purchase.order', [], ['name', 'x_nombre_prov', 'date_order', 'state', 'receipt_status', 'amount_total',
+      'currency_rate', 'date_planned', 'x_studio_fecha_de_produccin', 'x_nombre_arribo_oc', 'user_id'], 'date_order asc, id asc'),
+    searchRead(uid, 'purchase.order.line', [['display_type', '=', false]], ['order_id', 'product_id', 'product_qty', 'qty_received']),
+    searchRead(uid, 'stock.picking', [['container_id', '!=', false]], ['origin', 'container_id']),
+    searchRead(uid, 'account.move', [['move_type', '=', 'in_invoice'], ['state', '=', 'posted'], ['invoice_origin', '!=', false]],
+      ['invoice_origin', 'payment_state', 'amount_residual']),
+    searchRead(uid, 'containers.move', [], ['name', 'estado', 'transport_type', 'pickup_date', 'shipment_date', 'customs_date',
+      'clearance_date', 'arrival_date', 'expected_date', 'landed_cost_id', 'shipment_by', 'customs']),
+  ]);
+
+  const costIds = [...new Set(conts.map((c) => m2oId(c.landed_cost_id)).filter(Boolean))];
+  const lcl = costIds.length
+    ? await searchRead(uid, 'stock.landed.cost.lines', [['cost_id', 'in', costIds]], ['cost_id', 'name', 'price_unit'], 'id asc')
+    : [];
+
+  // --- agregados por OC (equivalente a polq) ---
+  const polq = new Map();
+  for (const l of lines) {
+    const oid = m2oId(l.order_id); if (!oid) continue;
+    let a = polq.get(oid);
+    if (!a) { a = { ped: 0, rec: 0, prods: new Set() }; polq.set(oid, a); }
+    a.ped += Number(l.product_qty) || 0;
+    a.rec += Number(l.qty_received) || 0;
+    if (l.product_id) a.prods.add(m2oId(l.product_id));
+  }
+  const poByName = new Map(pos.map((p) => [p.name, p]));
+  const contById = new Map(conts.map((c) => [c.id, c]));
+  const montoMxn = (p) => (p.currency_rate ? p.amount_total / p.currency_rate : null);
+
+  // --- pares contenedor ↔ OC (equivalente a pairs: origin separado por comas) ---
+  const pairs = new Set();
+  for (const sp of picks) {
+    const cid = m2oId(sp.container_id); if (!cid) continue;
+    for (const po of splitOrigin(sp.origin)) pairs.add(cid + '|' + po);
+  }
+  const contsDeOC = new Map();   // po_name → [container ids]
+  const ocsDeCont = new Map();   // container id → Set(po_name)
+  for (const k of pairs) {
+    const i = k.indexOf('|'); const cid = Number(k.slice(0, i)); const po = k.slice(i + 1);
+    if (!contsDeOC.has(po)) contsDeOC.set(po, []);
+    contsDeOC.get(po).push(cid);
+    if (!ocsDeCont.has(cid)) ocsDeCont.set(cid, new Set());
+    ocsDeCont.get(cid).add(po);
+  }
+
+  // --- pagos por OC (equivalente a bills/pay) ---
+  const pay = new Map();
+  for (const b of bills) {
+    for (const po of splitOrigin(b.invoice_origin)) {
+      let a = pay.get(po);
+      if (!a) { a = { n: 0, pend: 0, allPaid: true, anyPartial: false, anyPaid: false }; pay.set(po, a); }
+      const paid = ['paid', 'in_payment', 'reversed'].includes(b.payment_state);
+      a.n += 1; a.pend += Number(b.amount_residual) || 0;
+      a.allPaid = a.allPaid && paid; a.anyPaid = a.anyPaid || paid;
+      a.anyPartial = a.anyPartial || b.payment_state === 'partial';
+    }
+  }
+
+  // --- _todos ---
+  const rankState = { purchase: 0, done: 0, draft: 1, cancel: 2 };
+  const todos = pos
+    .filter((p) => ['purchase', 'done', 'draft', 'cancel'].includes(p.state))
+    .sort((a, b) => (rankState[a.state] - rankState[b.state]) || String(a.date_order).localeCompare(String(b.date_order)))
+    .map((p) => {
+      const q = polq.get(p.id) || { ped: 0, rec: 0, prods: new Set() };
+      const pg = pay.get(p.name);
+      let estatus = 'sin_factura';
+      if (pg) estatus = pg.allPaid ? 'pagada' : (pg.anyPartial || (pg.anyPaid && !pg.allPaid)) ? 'parcial' : 'no_pagada';
+      const cids = contsDeOC.get(p.name) || [];
+      const c = cids.length ? contById.get(Math.max(...cids)) : null;
+      const mx = montoMxn(p);
+      return {
+        name: p.name,
+        proveedor: str(p.x_nombre_prov),
+        fecha: dateLocal(p.date_order),
+        receipt_status: p.state === 'cancel' ? 'cancel' : str(p.receipt_status),
+        amount_total: mx === null ? null : round2(mx),
+        piezas_pedidas: Math.round(q.ped),
+        piezas_recibidas: Math.round(q.rec),
+        monto_pendiente: pg ? round2(pg.pend) : 0,
+        estatus_pago: estatus,
+        fecha_planeada: dateLocal(p.date_planned),
+        fecha_produccion: dateLocal(p.x_studio_fecha_de_produccin),
+        currency_rate: p.currency_rate,
+        estado_oc: p.state === 'done' ? 'purchase' : p.state,   // "Bloqueada" en Odoo = confirmada
+        arribo: str(p.x_nombre_arribo_oc),
+        container_name: c ? c.name : null,
+        container_estado: c ? str(c.estado) : null,
+        container_transporte: c ? str(c.transport_type) : null,
+        container_eta: c ? dateLocal(c.expected_date) : null,
+        container_llegada: c ? dateOnly(c.arrival_date) : null,
+        comprador_id: m2oId(p.user_id),
+        comprador_nombre: m2oName(p.user_id),
+        num_skus: q.prods.size,
+      };
+    });
+
+  // --- gastos por costo de importación ---
+  const lineasPorCosto = new Map();
+  for (const l of lcl) {
+    if (!l.name) continue;
+    const k = m2oId(l.cost_id);
+    if (!lineasPorCosto.has(k)) lineasPorCosto.set(k, []);
+    lineasPorCosto.get(k).push(l);
+  }
+
+  // --- containers ---
+  const containers = conts
+    .slice()
+    .sort((a, b) => ((ESTADO_RANK[a.estado] ?? 5) - (ESTADO_RANK[b.estado] ?? 5))
+      || String(a.expected_date || '9999').localeCompare(String(b.expected_date || '9999')))
+    .map((cm) => {
+      const ocs = [...(ocsDeCont.get(cm.id) || [])].map((n) => poByName.get(n)).filter(Boolean);
+      const lineasCosto = lineasPorCosto.get(m2oId(cm.landed_cost_id)) || [];
+      const arribos = [...new Set(ocs.map((p) => p.x_nombre_arribo_oc).filter(Boolean))].sort();
+      return {
+        id: cm.id,
+        name: cm.name,
+        estado: str(cm.estado),
+        transporte: str(cm.transport_type),
+        pickup: dateOnly(cm.pickup_date),
+        shipment: dateOnly(cm.shipment_date),
+        customs: dateOnly(cm.customs_date),
+        clearance: dateOnly(cm.clearance_date),
+        arrival: dateOnly(cm.arrival_date),
+        eta: dateLocal(cm.expected_date),
+        num_ocs: ocs.length || null,
+        monto_mxn: ocs.length ? round2(ocs.reduce((s, p) => s + (montoMxn(p) || 0), 0)) : null,
+        arribos: arribos.length ? arribos.join(' | ') : null,
+        piezas: ocs.length ? Math.round(ocs.reduce((s, p) => s + ((polq.get(p.id) || {}).ped || 0), 0)) : null,
+        gasto_logistico: lineasCosto.length ? round2(lineasCosto.reduce((s, l) => s + (Number(l.price_unit) || 0), 0)) : null,
+        transportista_id: m2oId(cm.shipment_by),
+        transportista_nombre: m2oName(cm.shipment_by),
+        aduana_id: m2oId(cm.customs),
+        aduana_nombre: m2oName(cm.customs),
+      };
+    });
+
+  // --- gastosDesglose ---
+  const gastosDesglose = [];
+  for (const cm of conts.slice().sort((a, b) => a.id - b.id)) {
+    const k = m2oId(cm.landed_cost_id); if (!k) continue;
+    for (const l of (lineasPorCosto.get(k) || [])) {
+      gastosDesglose.push({ container_id: cm.id, container_name: cm.name, concepto: initcap(l.name), monto: round2(l.price_unit) });
+    }
+  }
+
+  // --- costeoExtra ---
+  const costeoExtra = {};
+  for (const [cid, set] of ocsDeCont) {
+    const ocs = [...set].map((n) => poByName.get(n)).filter(Boolean);
+    if (!ocs.length) continue;
+    const provs = [...new Set(ocs.map((p) => p.x_nombre_prov).filter(Boolean))].sort();
+    costeoExtra[String(cid)] = {
+      skus: ocs.reduce((s, p) => s + ((polq.get(p.id) || {}).prods || new Set()).size, 0),
+      num_prov: provs.length,
+      proveedores: provs.join(' · ') || null,
+    };
+  }
+
+  return { _todos: todos, containers, gastosDesglose, costeoExtra, snapshot: new Date().toISOString(), fuente: 'odoo' };
 }
 
 module.exports = async (req, res) => {
+  const fresh = req.query && (req.query.fresh === '1' || req.query.fresh === 'true' || /^\d+$/.test(String(req.query.fresh || '')));
   try {
-    if (!process.env.BQ_CLIENT_EMAIL || !process.env.BQ_PRIVATE_KEY) {
-      res.status(500).json({ error: 'Faltan las variables de entorno BQ_CLIENT_EMAIL / BQ_PRIVATE_KEY en Vercel.' });
+    const faltan = ['ODOO_URL', 'ODOO_DB', 'ODOO_USER', 'ODOO_API_KEY'].filter((k) => !process.env[k]);
+    if (faltan.length) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(500).json({ error: 'Faltan variables de entorno en Vercel: ' + faltan.join(', ') });
       return;
     }
-    const bq = getBQ();
-    const [todos, containers, gastos, costeoArr] = await Promise.all([
-      runJson(bq, SQL_TODOS),
-      runJson(bq, SQL_CONTAINERS),
-      runJson(bq, SQL_GASTOS),
-      runJson(bq, SQL_COSTEO),
-    ]);
-    const costeoExtra = {};
-    (costeoArr || []).forEach(r => {
-      costeoExtra[String(r.container_id)] = { skus: r.skus, num_prov: r.num_prov, proveedores: r.proveedores };
-    });
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
-    res.status(200).json({
-      _todos: todos || [],
-      containers: containers || [],
-      gastosDesglose: gastos || [],
-      costeoExtra,
-      snapshot: new Date().toISOString(),
-    });
+    const data = await construir();
+    res.setHeader('Cache-Control', fresh ? 'no-store' : 's-maxage=120, stale-while-revalidate=60');
+    res.status(200).json(data);
   } catch (e) {
+    res.setHeader('Cache-Control', 'no-store');
     res.status(500).json({ error: String((e && e.message) || e) });
   }
 };
+
+module.exports._construir = construir; // para pruebas
