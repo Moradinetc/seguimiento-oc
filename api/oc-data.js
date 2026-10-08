@@ -260,6 +260,7 @@ async function construir() {
         arrival: dateOnly(cm.arrival_date),
         eta: dateLocal(cm.expected_date),
         num_ocs: ocs.length || null,
+        ocs: ocs.map((p) => p.name).sort(),   // folios de las OCs que trae (para el buscador del tracker)
         monto_mxn: ocs.length ? round2(ocs.reduce((s, p) => s + (montoMxn(p) || 0), 0)) : null,
         arribos: arribos.length ? arribos.join(' | ') : null,
         piezas: ocs.length ? Math.round(ocs.reduce((s, p) => s + ((polq.get(p.id) || {}).ped || 0), 0)) : null,
