@@ -381,9 +381,46 @@
   .trk-sel:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--border));}
   /* Fila de arribo expandible → sus OCs */
   tr.emb-row{cursor:pointer;}
+  /* Tooltip propio (reemplaza al nativo del navegador en todo el tablero) */
+  #etcTip{position:fixed;z-index:10000;max-width:340px;padding:9px 12px;border-radius:10px;background:#241B2E;color:#FDFCFE;
+    font:500 12.5px/1.45 var(--font-ui, system-ui, sans-serif);white-space:pre-line;box-shadow:0 10px 28px -8px rgba(36,27,46,.45);
+    pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .12s ease, transform .12s ease;}
+  #etcTip.on{opacity:1;transform:translateY(0);}
+  #etcTip::after{content:"";position:absolute;left:var(--ax,50%);width:10px;height:10px;background:#241B2E;transform:translateX(-50%) rotate(45deg);}
+  #etcTip.arriba::after{bottom:-4px;}
+  #etcTip.abajo::after{top:-4px;}
+  #etcTip b{color:#D9C98A;font-weight:700;}
+  /* Marca en "Pz rec." cuando la OC se cerró con faltante o llegó de más */
+  .pz-marca{cursor:help;text-decoration:underline dotted;text-underline-offset:3px;}
+  .pz-marca .ico{font-size:10px;margin-left:4px;vertical-align:1px;}
+  .pz-falta{color:#B42318;text-decoration-color:#B42318;}
+  .pz-sobra{color:#0F6E58;text-decoration-color:#0F6E58;}
+  /* Buscador de proveedores (Resumen) */
+  .prov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px;}
+  .prov-buscar{position:relative;flex:0 1 340px;min-width:220px;}
+  .prov-buscar input{width:100%;padding:9px 34px 9px 34px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:13.5px;background:#fff;}
+  .prov-buscar input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(95,37,159,.12);}
+  .prov-buscar .lupa{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--muted);pointer-events:none;}
+  .prov-buscar .borrar{position:absolute;right:6px;top:50%;transform:translateY(-50%);appearance:none;border:0;background:transparent;color:var(--muted);cursor:pointer;width:24px;height:24px;border-radius:50%;font-size:15px;line-height:24px;display:none;}
+  .prov-buscar .borrar:hover{background:var(--accent-soft,#EFE8F7);color:var(--accent);}
+  .prov-buscar .cnt{display:block;margin-top:4px;padding-left:4px;font-size:11.5px;font-weight:700;color:var(--accent);min-height:14px;}
+  .prov-nom mark{background:#F3E9B8;color:inherit;border-radius:3px;padding:0 1px;}
   /* Buscador con chips (Embarques por arribo / Tracker), en el encabezado */
   .emb-searchbar{flex:1 1 360px;min-width:260px;max-width:620px;display:flex;flex-direction:column;gap:4px;}
-  .chipbox{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:40px;padding:5px 8px;border:1px solid var(--border);border-radius:11px;background:#fff;cursor:text;}
+  .chipbox{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:40px;padding:5px 8px;border:1px solid var(--border);border-radius:11px;background:#fff;cursor:text;}
+  /* Sugerencias propias (reemplazan la lista nativa del navegador) */
+  .sug-list{position:absolute;left:-1px;right:-1px;top:calc(100% + 6px);z-index:60;max-height:300px;overflow-y:auto;background:#fff;
+    border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 34px -12px rgba(36,27,46,.35);padding:6px;display:none;}
+  .sug-list.on{display:block;}
+  .sug-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13.5px;color:var(--ink,#241B2E);}
+  .sug-item .nom{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .sug-item .nom mark{background:transparent;color:var(--accent);font-weight:800;padding:0;}
+  .sug-item .meta{flex:0 0 auto;font-size:11.5px;color:var(--muted);font-weight:600;}
+  .sug-item.activo,.sug-item:hover{background:var(--accent-soft,#EFE8F7);}
+  .sug-item.activo .nom{color:var(--accent);}
+  .sug-head{padding:4px 10px 6px;font-size:10.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);}
+  .sug-vacio{padding:10px;font-size:12.5px;color:var(--muted);}
+  .sug-vacio b{color:var(--accent);}
   .chipbox:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(95,37,159,.12);}
   .chipbox .emb-search{flex:1 1 160px;min-width:140px;border:0;outline:none;font:inherit;font-size:13.5px;padding:5px 4px;background:transparent;}
   .arr-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:3px 4px 3px 10px;border-radius:999px;background:var(--accent-soft,#EFE8F7);color:var(--accent);font-size:12.5px;font-weight:700;line-height:1.4;white-space:nowrap;}
@@ -547,8 +584,18 @@
     </div>
 
     <div class="card" style="margin-bottom:16px;">
-      <h3>Proveedores por monto</h3>
-      <div class="cardsub">todos los proveedores · ordenado por monto</div>
+      <div class="prov-head">
+        <div>
+          <h3>Proveedores por monto</h3>
+          <div class="cardsub">todos los proveedores · ordenado por monto</div>
+        </div>
+        <div class="prov-buscar">
+          <svg class="lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="provSearch" type="text" autocomplete="off" placeholder="Buscar proveedor…" aria-label="Buscar proveedor">
+          <button type="button" class="borrar" id="provSearchClear" aria-label="Borrar búsqueda">×</button>
+          <span class="cnt" id="provSearchCnt"></span>
+        </div>
+      </div>
       <div class="tablewrap" style="max-height:440px;">
         <table>
           <thead><tr><th>Proveedor</th><th style="text-align:center;">OCs</th><th style="text-align:center;">Monto (MXN)</th><th style="text-align:center;">Piezas ordenadas</th><th style="text-align:center;">Piezas pendientes</th></tr></thead>
@@ -585,11 +632,12 @@
         <div class="emb-searchbar" id="embSearchBar">
           <div class="chipbox" id="embChipBox">
             <span id="embChips" style="display:contents;"></span>
-            <input id="embSearch" class="emb-search" type="text" list="embArribosList" autocomplete="off"
+            <input id="embSearch" class="emb-search" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="embSug"
               placeholder="Arribo, OC, proveedor o contenedor… Enter para agregar" aria-label="Agregar arribo u otro filtro de búsqueda">
+            <div class="sug-list" id="embSug" role="listbox"></div>
             <button type="button" class="chip-clear" id="embChipsClear" title="Quitar todos los filtros" style="display:none;">Limpiar</button>
           </div>
-          <datalist id="embArribosList"></datalist>
+
           <div class="hint"><span>Agrega varios arribos: se muestran los que coincidan con cualquiera.</span><span class="cnt" id="embSearchCnt"></span></div>
         </div>
         <div class="emb-toggle" id="embToggle">
@@ -1106,6 +1154,7 @@ function renderCharts(k){
   })();
 }
 
+let provSearchQ = '';
 function renderTopProveedores(){
   const byProv = {};
   ordenesFiltradas.filter(matchesStatusFilters).forEach(o=>{
@@ -1115,16 +1164,33 @@ function renderTopProveedores(){
     byProv[o.proveedor].piezas_ordenadas += o.piezas_pedidas;
     byProv[o.proveedor].pend += Math.max(0, o.piezas_pedidas - o.piezas_recibidas);
   });
-  const todos = Object.values(byProv).sort((a,b)=>b.monto-a.monto);
-  document.getElementById('tblProveedores').innerHTML = todos.map((p,i)=>`<tr>
-    <td><span class="prov-rank">${i+1}</span>${p.proveedor}</td>
+  const ranking = Object.values(byProv).sort((a,b)=>b.monto-a.monto);
+  ranking.forEach((p,i)=>p.rank = i+1);           // el número de lugar se conserva aunque se filtre
+  // Búsqueda solo por nombre de proveedor (sin importar mayúsculas ni acentos)
+  // quita acentos letra por letra (misma longitud, para que el resaltado caiga en su lugar)
+  const norm = t => Array.from(String(t||'')).map(c=>(c.normalize('NFD').replace(/[\u0300-\u036f]/g,'')||c)[0]).join('').toLowerCase();
+  const q = norm(provSearchQ.trim());
+  const todos = q ? ranking.filter(p=>norm(p.proveedor).includes(q)) : ranking;
+  const cnt = document.getElementById('provSearchCnt'); if(cnt) cnt.textContent = q ? `${todos.length} de ${ranking.length} proveedores` : '';
+  const marcar = nombre => {
+    const n = String(nombre||'—'); if(!q) return escapeHtml(n);
+    const i = norm(n).indexOf(q); if(i<0) return escapeHtml(n);
+    return escapeHtml(n.slice(0,i)) + '<mark>' + escapeHtml(n.slice(i,i+q.length)) + '</mark>' + escapeHtml(n.slice(i+q.length));
+  };
+  if(!todos.length){
+    document.getElementById('tblProveedores').innerHTML = `<tr><td colspan="5" style="padding:18px;color:var(--muted);text-align:center;">Ningún proveedor coincide con “${escapeHtml(provSearchQ.trim())}”.</td></tr>`;
+    document.getElementById('tfootProveedores').innerHTML = '';
+    return;
+  }
+  document.getElementById('tblProveedores').innerHTML = todos.map((p)=>`<tr>
+    <td class="prov-nom"><span class="prov-rank">${p.rank}</span>${marcar(p.proveedor)}</td>
     <td class="num">${p.num_ocs}</td>
     <td class="num">${fmtMoney(p.monto)}</td>
     <td class="num">${fmtInt(p.piezas_ordenadas)}</td>
     <td class="num" style="${p.pend>0?'color:#998542':''}">${fmtInt(p.pend)}</td>
   </tr>`).join('');
   document.getElementById('tfootProveedores').innerHTML = `<tr>
-    <td>Total (${todos.length} proveedores)</td>
+    <td>Total (${q ? `${todos.length} de ${ranking.length}` : todos.length} proveedores)</td>
     <td class="num">${fmtInt(sumBy(todos,p=>p.num_ocs))}</td>
     <td class="num">${fmtMoney(sumBy(todos,p=>p.monto))}</td>
     <td class="num">${fmtInt(sumBy(todos,p=>p.piezas_ordenadas))}</td>
@@ -1132,6 +1198,22 @@ function renderTopProveedores(){
   </tr>`;
 }
 
+// "Pz rec." con marca y tooltip cuando la OC se cerró incompleta (faltante cancelado) o llegó de más.
+function celdaRecibidas(o, valor){
+  const ped = o.piezas_pedidas || 0, rec = o.piezas_recibidas || 0, dif = rec - ped;
+  const txt = fmtInt(valor);
+  if(!ped || dif === 0) return txt;
+  const pct = Math.round(Math.abs(dif) / ped * 1000) / 10;
+  if(dif < 0 && o.receipt_status === 'full'){
+    const tip = `Faltaron ${fmtInt(-dif)} piezas (${pct}%)\nLa OC se pidió con ${fmtInt(ped)} y llegaron ${fmtInt(rec)}.\nEl resto se canceló en Odoo: ya no se espera.`;
+    return `<span class="pz-marca pz-falta" data-tip="${escapeHtml(tip)}">${txt}<span class="ico">▼</span></span>`;
+  }
+  if(dif > 0){
+    const tip = `Llegaron ${fmtInt(dif)} piezas de más (${pct}%)\nLa OC se pidió con ${fmtInt(ped)} y llegaron ${fmtInt(rec)}.`;
+    return `<span class="pz-marca pz-sobra" data-tip="${escapeHtml(tip)}">${txt}<span class="ico">▲</span></span>`;
+  }
+  return txt;   // faltante aún pendiente de recibir: es normal, sin marca
+}
 function tagDividida(o, d){
   if(!d || !o.arribos_detalle || o.arribos_detalle.length < 2) return '';
   const otros = o.arribos_detalle.filter(x=>x.arribo!==d.arribo).map(x=>x.arribo).join(', ');
@@ -1146,7 +1228,7 @@ function embOcsDetail(ocs){
     <td style="font-weight:700;color:var(--accent);white-space:nowrap;">${o.name}${tagDividida(o,d)}</td>
     <td>${o.proveedor||'—'}</td>
     <td class="num">${fmtInt(d ? d.piezas : o.piezas_pedidas)}</td>
-    <td class="num">${fmtInt(d ? (d.piezas_recibidas ?? Math.round((o.piezas_recibidas||0) * d.fraccion)) : o.piezas_recibidas)}</td>
+    <td class="num">${celdaRecibidas(o, d ? (d.piezas_recibidas ?? Math.round((o.piezas_recibidas||0) * d.fraccion)) : o.piezas_recibidas)}</td>
     <td class="num">${d ? (d.skus != null ? fmtInt(d.skus) : '<span title="Sin recepciones etiquetadas con este arribo: no se sabe qué productos trae">—</span>') : fmtInt(o.num_skus)}</td>
     <td>${pillReceipt(o.receipt_status)}</td>
     <td class="num">${fmtMoney(d ? d.monto : o.amount_total)}</td>
@@ -1161,6 +1243,7 @@ let embChips = [];            // [{t:'Air #4-26', exacto:true}] — se guardan e
 const EMB_CHIPS_KEY = 'seguimiento-oc:chips-embarques';
 let embArribosConocidos = new Set();   // nombres de arribo (minúsculas) para saber si un chip es un arribo exacto
 let embArribosNombre = new Map();      // minúsculas → nombre tal como está en Odoo
+let embArribosInfo = [];               // [{nombre, ocs, monto}] para las sugerencias
 try{ const g = JSON.parse(localStorage.getItem(EMB_CHIPS_KEY) || '[]'); if(Array.isArray(g)) embChips = g.filter(x=>x && x.t); }catch(e){}
 function guardarChips(){ try{ localStorage.setItem(EMB_CHIPS_KEY, JSON.stringify(embChips)); }catch(e){} }
 // Términos activos: cada chip + lo que se está escribiendo. Un arribo/contenedor se muestra si coincide con CUALQUIERA.
@@ -1235,8 +1318,9 @@ function renderEmbarques(){
   // Lista de sugerencias (autocompletar) con todos los arribos del periodo
   embArribosConocidos = new Set(todos.map(a=>a.arribo.toLowerCase()));
   embArribosNombre = new Map(todos.map(a=>[a.arribo.toLowerCase(), a.arribo]));
-  const dl = document.getElementById('embArribosList');
-  if(dl) dl.innerHTML = todos.filter(a=>a.arribo!=='Sin arribo asignado').map(a=>a.arribo).sort((x,y)=>x.localeCompare(y,'es',{numeric:true})).map(n=>`<option value="${escapeHtml(n)}"></option>`).join('');
+  embArribosInfo = todos.filter(a=>a.arribo!=='Sin arribo asignado')
+    .map(a=>({nombre:a.arribo, ocs:a.num_ocs, monto:a.monto}))
+    .sort((x,y)=>x.nombre.localeCompare(y.nombre,'es',{numeric:true}));
   const terminos = embTerminos();
   const q = terminos.length > 0;
   if(q){
@@ -1685,7 +1769,7 @@ function renderContenedores(){
           <span style="font-size:9.5px;color:var(--muted);font-weight:700;">${avance}%</span>
         </div>
       </td>
-      <td class="num" title="${ordenes.filter(o=>o.container_name===c.name).map(o=>o.name).join(', ')}" style="cursor:help;text-decoration:underline dotted;">${fmtInt(c.num_ocs)}</td>
+      <td class="num" title="${escapeHtml((Array.isArray(c.ocs) ? c.ocs : ordenes.filter(o=>o.container_name===c.name).map(o=>o.name)).join(', '))}" style="cursor:help;text-decoration:underline dotted;">${fmtInt(c.num_ocs)}</td>
       <td class="num">${fmtMoney(c.monto_mxn)}</td>
       <td class="num ${c.gasto_logistico?'gasto-hover':''}" data-container="${c.name}" style="${c.gasto_logistico?'color:var(--warn);font-weight:700;':''}">${c.gasto_logistico ? fmtMoney(c.gasto_logistico) : '—'}</td>
       <td class="num" style="${c.gasto_logistico?'color:var(--warn);font-weight:700;':''}">${c.gasto_logistico && c.monto_mxn ? (c.gasto_logistico/c.monto_mxn*100).toFixed(1)+'%' : '—'}</td>
@@ -1807,7 +1891,7 @@ function renderTable(){
         <td style="${esAtrasada(o)?'color:var(--bad);font-weight:600;':''}">${o.fecha_planeada?fmtFecha(o.fecha_planeada):'—'}${esAtrasada(o)?`<div style="font-size:9.5px;font-weight:600;margin-top:2px;white-space:nowrap;">${diasRetraso(o)} días atrasada</div>`:''}</td>
         <td>${pillReceipt(o.receipt_status)}</td>
         <td class="num">${fmtInt(o.piezas_pedidas)}</td>
-        <td class="num">${fmtInt(o.piezas_recibidas)}</td>
+        <td class="num">${celdaRecibidas(o, o.piezas_recibidas)}</td>
         <td class="num">${fmtMoney(o.amount_total)}</td>
         <td>${pillPago(o.estatus_pago)}</td>
         <td class="num">${o.monto_pendiente>0?fmtMoney(o.monto_pendiente):'—'}</td>
@@ -2318,25 +2402,143 @@ async function actualizarDesdeOdoo(){
   }
 }
 document.getElementById('btnActualizar').addEventListener('click', actualizarDesdeOdoo);
+(function(){   // buscador de proveedores (Resumen)
+  const inp = document.getElementById('provSearch'), clr = document.getElementById('provSearchClear'); if(!inp) return;
+  let t = null;
+  const aplicar = ()=>{ provSearchQ = inp.value; clr.style.display = inp.value ? 'block' : 'none'; renderTopProveedores(); };
+  inp.addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(aplicar, 120); });
+  inp.addEventListener('keydown', e=>{ if(e.key==='Escape'){ inp.value=''; aplicar(); } });
+  clr.addEventListener('click', ()=>{ inp.value=''; aplicar(); inp.focus(); });
+})();
+// --- Tooltip propio: toma cualquier elemento con title o data-tip (incluidos los que se pintan después) ---
+(function(){
+  const tip = document.createElement('div'); tip.id = 'etcTip'; tip.setAttribute('role','tooltip'); document.body.appendChild(tip);
+  let actual = null, timer = null;
+  const textoDe = el => {
+    if(el.hasAttribute('title')){            // el title nativo se pasa a data-tip para que el navegador no muestre el suyo
+      const t = el.getAttribute('title'); el.removeAttribute('title');
+      if(t && !el.hasAttribute('data-tip')) el.setAttribute('data-tip', t);
+      if(t && !el.hasAttribute('aria-label') && !el.textContent.trim()) el.setAttribute('aria-label', t);
+    }
+    return el.getAttribute('data-tip') || '';
+  };
+  function mostrar(el){
+    const t = textoDe(el); if(!t){ ocultar(); return; }
+    actual = el; tip.className = '';
+    const lineas = t.split('\n');
+    if(lineas.length > 1){   // varias líneas: la primera va como título
+      tip.innerHTML = '<b>' + escapeHtml(lineas[0]) + '</b>\n' + escapeHtml(lineas.slice(1).join('\n'));
+    } else tip.textContent = t;
+    const r = el.getBoundingClientRect(), vw = window.innerWidth;
+    tip.style.left = '0px'; tip.style.top = '0px';
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let left = Math.min(Math.max(8, r.left + r.width/2 - w/2), vw - w - 8);
+    let arriba = r.top - h - 10 > 8;
+    const top = arriba ? r.top - h - 10 : r.bottom + 10;
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+    tip.style.setProperty('--ax', Math.min(Math.max(12, r.left + r.width/2 - left), w - 12) + 'px');
+    tip.className = (arriba ? 'arriba' : 'abajo') + ' on';
+  }
+  function ocultar(){ clearTimeout(timer); actual = null; tip.className = ''; }
+  const objetivo = e => e.target.closest && e.target.closest('[title],[data-tip]');
+  document.addEventListener('mouseover', e=>{
+    const el = objetivo(e); if(!el){ return; }
+    textoDe(el);                              // quita el title nativo de inmediato
+    if(el === actual) return;
+    clearTimeout(timer); timer = setTimeout(()=>mostrar(el), 180);
+  });
+  document.addEventListener('mouseout', e=>{
+    const el = objetivo(e); if(!el) return;
+    if(e.relatedTarget && el.contains(e.relatedTarget)) return;
+    ocultar();
+  });
+  document.addEventListener('focusin', e=>{ const el = objetivo(e); if(el) mostrar(el); });
+  document.addEventListener('focusout', ocultar);
+  document.addEventListener('touchstart', e=>{     // en celular/tablet: tocar muestra el tooltip unos segundos
+    const el = objetivo(e); if(!el){ ocultar(); return; }
+    mostrar(el); clearTimeout(timer); timer = setTimeout(ocultar, 3500);
+  }, {passive:true});
+  window.addEventListener('scroll', ocultar, true);
+  window.addEventListener('resize', ocultar);
+  document.addEventListener('mousedown', ocultar, true);   // un clic (p. ej. en Limpiar, que desaparece) nunca deja el tooltip flotando
+  document.addEventListener('keydown', ocultar, true);
+  // Convierte los title nativos en cuanto se pintan, para que el navegador nunca muestre el suyo
+  const convertir = root => { if(root.nodeType!==1) return; if(root.hasAttribute('title')) textoDe(root); root.querySelectorAll && root.querySelectorAll('[title]').forEach(textoDe); };
+  convertir(document.body);
+  new MutationObserver(ms=>{ for(const m of ms){
+    if(m.type==='attributes'){ if(m.target.hasAttribute('title')) textoDe(m.target); }
+    else m.addedNodes.forEach(convertir);
+    if(actual && !actual.isConnected) ocultar();
+  }}).observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['title']});
+})();
 (function(){
   const inp = document.getElementById('embSearch'); if(!inp) return;
   const box = document.getElementById('embChipBox');
   let t = null;
-  const confirmar = ()=>{ if(agregarChip(inp.value)){ inp.value=''; embSearchQ=''; aplicarBusquedaEmb(); } };
-  inp.addEventListener('input', (e)=>{
-    // Si se eligió un arribo de la lista de sugerencias, se convierte en chip de inmediato
-    const v = inp.value.trim();
-    if(e.inputType === 'insertReplacementText' || (!e.inputType && embArribosConocidos.has(v.toLowerCase()))){ confirmar(); return; }
+  const lista = document.getElementById('embSug');
+  let sugs = [], activo = -1;
+  const confirmar = (valor)=>{ if(agregarChip(valor ?? inp.value)){ inp.value=''; embSearchQ=''; aplicarBusquedaEmb(); } cerrarSug(); };
+  function resaltar(nombre, q){
+    if(!q) return escapeHtml(nombre);
+    const i = nombre.toLowerCase().indexOf(q); if(i<0) return escapeHtml(nombre);
+    return escapeHtml(nombre.slice(0,i)) + '<mark>' + escapeHtml(nombre.slice(i,i+q.length)) + '</mark>' + escapeHtml(nombre.slice(i+q.length));
+  }
+  function abrirSug(){
+    const q = inp.value.trim().toLowerCase();
+    const ya = new Set(embChips.map(c=>c.t.toLowerCase()));
+    sugs = embArribosInfo.filter(a=>!ya.has(a.nombre.toLowerCase()) && (!q || a.nombre.toLowerCase().includes(q)));
+    // Primero los que empiezan con lo escrito
+    if(q) sugs.sort((a,b)=> (a.nombre.toLowerCase().startsWith(q)?0:1) - (b.nombre.toLowerCase().startsWith(q)?0:1));
+    activo = (sugs.length && q) ? 0 : -1;   // sin texto no se resalta nada: Enter no agrega por accidente
+    if(!sugs.length){
+      lista.innerHTML = q ? `<div class="sug-vacio">Ningún arribo coincide. Presiona <b>Enter</b> para buscar “${escapeHtml(inp.value.trim())}” en OCs, proveedores y contenedores.</div>` : '';
+    } else {
+      lista.innerHTML = `<div class="sug-head">${q ? 'Arribos que coinciden' : 'Arribos del periodo'} · ${sugs.length}</div>` +
+        sugs.map((a,i)=>`<div class="sug-item${i===activo?' activo':''}" role="option" data-i="${i}" aria-selected="${i===activo}">
+          <span class="nom">${resaltar(a.nombre, q)}</span><span class="meta">${a.ocs} OC${a.ocs===1?'':'s'} · ${fmtMoneyCompact ? fmtMoneyCompact(a.monto) : fmtMoney(a.monto)}</span></div>`).join('');
+    }
+    const on = !!lista.innerHTML;
+    lista.classList.toggle('on', on); inp.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+  function cerrarSug(){ lista.classList.remove('on'); lista.innerHTML=''; sugs=[]; activo=-1; inp.setAttribute('aria-expanded','false'); }
+  function moverActivo(d){
+    if(!sugs.length) return;
+    activo = activo < 0 ? (d < 0 ? sugs.length - 1 : 0) : (activo + d + sugs.length) % sugs.length;
+    lista.querySelectorAll('.sug-item').forEach((el,i)=>{ el.classList.toggle('activo', i===activo); el.setAttribute('aria-selected', i===activo); });
+    const el = lista.querySelector('.sug-item.activo'); if(el) el.scrollIntoView({block:'nearest'});
+  }
+  inp.addEventListener('focus', abrirSug);
+  inp.addEventListener('input', ()=>{
+    abrirSug();
     clearTimeout(t); t = setTimeout(()=>{ embSearchQ = inp.value; aplicarBusquedaEmb(); }, 150);
   });
   inp.addEventListener('keydown', (e)=>{
-    if(e.key === 'Enter' || e.key === ','){ e.preventDefault(); clearTimeout(t); confirmar(); }
-    else if(e.key === 'Backspace' && !inp.value && embChips.length){ embChips.pop(); guardarChips(); aplicarBusquedaEmb(); }
-    else if(e.key === 'Escape'){ inp.value=''; embSearchQ=''; aplicarBusquedaEmb(); }
+    const abierta = lista.classList.contains('on') && sugs.length;
+    if(e.key === 'ArrowDown'){ e.preventDefault(); if(!lista.classList.contains('on')) abrirSug(); else moverActivo(1); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); moverActivo(-1); }
+    else if(e.key === 'Enter' || e.key === 'Tab' && abierta && inp.value.trim()){
+      e.preventDefault(); clearTimeout(t);
+      // Enter toma el arribo resaltado si lo escrito coincide con alguno; si no, agrega el texto tal cual
+      if(abierta && activo >= 0) confirmar(sugs[activo].nombre);
+      else confirmar();
+      abrirSug();
+    }
+    else if(e.key === ','){ e.preventDefault(); clearTimeout(t); confirmar(); abrirSug(); }
+    else if(e.key === 'Backspace' && !inp.value && embChips.length){ embChips.pop(); guardarChips(); aplicarBusquedaEmb(); abrirSug(); }
+    else if(e.key === 'Escape'){ if(lista.classList.contains('on')) cerrarSug(); else { inp.value=''; embSearchQ=''; aplicarBusquedaEmb(); } }
   });
+  lista.addEventListener('mousedown', (e)=>{       // mousedown: se elige antes de que el campo pierda el foco
+    const it = e.target.closest('.sug-item'); if(!it) return;
+    e.preventDefault(); confirmar(sugs[Number(it.dataset.i)].nombre); abrirSug(); inp.focus();
+  });
+  lista.addEventListener('mousemove', (e)=>{
+    const it = e.target.closest('.sug-item'); if(!it) return;
+    const i = Number(it.dataset.i); if(i!==activo){ activo = i; lista.querySelectorAll('.sug-item').forEach((el,k)=>el.classList.toggle('activo', k===i)); }
+  });
+  inp.addEventListener('blur', ()=> setTimeout(cerrarSug, 120));
   box.addEventListener('click', (e)=>{
     const b = e.target.closest('.arr-chip button');
-    if(b){ embChips.splice(Number(b.dataset.i),1); guardarChips(); aplicarBusquedaEmb(); inp.focus(); return; }
+    if(b){ embChips.splice(Number(b.dataset.i),1); guardarChips(); aplicarBusquedaEmb(); inp.focus(); abrirSug(); return; }
     if(e.target === box) inp.focus();
   });
   document.getElementById('embChipsClear').addEventListener('click', ()=>{ embChips=[]; inp.value=''; embSearchQ=''; guardarChips(); aplicarBusquedaEmb(); inp.focus(); });
